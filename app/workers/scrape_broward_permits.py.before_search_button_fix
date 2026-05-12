@@ -1,0 +1,1132 @@
+"""
+Broward permit scraper/importer for leadflow.
+
+Purpose:
+- Scrape Broward municipal Accela permit portals, starting with Weston.
+- Save raw permit payloads into raw_permits.
+- Normalize usable permit records into normalized_permits.
+- Save debug page sources/inventories so selector/search issues can be diagnosed.
+
+Primary stable source right now:
+- weston_accela
+
+Known reality:
+- Broward is not one clean countywide permit feed.
+- Each city may need its own Accela/source config.
+- This script is designed to support source-by-source expansion.
+
+Run examples:
+    python -m app.workers.scrape_broward_permits --source weston_accela --days-back 7 --visible --debug-pages
+    python -m app.workers.scrape_broward_permits --source weston_accela --start 2026-04-24 --end 2026-04-24 --limit 0 --pages 25 --visible --debug-pages
+    python -m app.workers.scrape_broward_permits --all-broward --days-back 30 --limit 0 --pages 25 --debug-pages
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import time
+from dataclasses import asdict, dataclass
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import psycopg2
+from psycopg2.extras import Json
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
+
+from app.core.db import get_connection
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+DATA_DIR = BASE_DIR / "data"
+DEBUG_DIR = DATA_DIR / "debug" / "broward_permits"
+RAW_EXPORT_DIR = DATA_DIR / "raw" / "broward" / "permits"
+CONFIG_PATH = BASE_DIR / "config" / "counties" / "broward_permit_sources.json"
+
+COUNTY_NAME = "Broward"
+COUNTY_STATE = "FL"
+DEFAULT_COUNTY_ID = 4
+
+# Conservative default source list. Weston is confirmed working.
+DEFAULT_SOURCES: List[Dict[str, Any]] = [
+    {
+        "name": "weston_accela",
+        "jurisdiction": "Weston",
+        "base_url": "https://aca-prod.accela.com/WESTON/Cap/CapHome.aspx?module=Building&TabName=Building",
+        "record_type_contains": "Building",
+    },
+    {
+        "name": "fort_lauderdale_accela",
+        "jurisdiction": "Fort Lauderdale",
+        "base_url": "https://aca-prod.accela.com/FTL/Cap/CapHome.aspx?module=Building&TabName=Building",
+        "record_type_contains": "Building",
+    },
+    {
+        "name": "hollywood_accela",
+        "jurisdiction": "Hollywood",
+        "base_url": "https://aca-prod.accela.com/HOLLYWOOD/Cap/CapHome.aspx?module=Building&TabName=Building",
+        "record_type_contains": "Building",
+    },
+    {
+        "name": "cooper_city_accela",
+        "jurisdiction": "Cooper City",
+        "base_url": "https://aca-prod.accela.com/COOPERCITY/Cap/CapHome.aspx?module=Building&TabName=Building",
+        "record_type_contains": "Building",
+    },
+]
+
+JUNK_RECORD_LABELS = {
+    "search cases",
+    "pay fine and fees",
+    "vacation rental fee",
+    "code enforcement fines and fees",
+    "planning, zoning & certificate of use fees",
+    "landscaping permit fee",
+    "engineering permit fee",
+    "building permit fee",
+    "vacation rental inspection",
+    "certificate of use inspection",
+    "engineering inspection",
+    "building inspection",
+    "code enforcement",
+    "planning, zoning & certificate of use",
+    "landscaping",
+    "engineering",
+    "local business tax receipt",
+    "building",
+}
+
+PERMIT_NUMBER_RE = re.compile(r"\b[A-Z]{1,3}\d{2}-\d{4,6}(?:\.\d{3})?\b", re.I)
+DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{4}\b")
+MONEY_RE = re.compile(r"\$\s*([\d,]+(?:\.\d{2})?)")
+
+
+@dataclass
+class PermitRecord:
+    source_name: str
+    jurisdiction: str
+    permit_number: str
+    permit_type: Optional[str] = None
+    project_description: Optional[str] = None
+    address_1: Optional[str] = None
+    owner_name: Optional[str] = None
+    business_name: Optional[str] = None
+    issued_date: Optional[date] = None
+    status: Optional[str] = None
+    valuation: Optional[float] = None
+    raw_url: Optional[str] = None
+    raw_payload: Optional[Dict[str, Any]] = None
+
+
+def clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def normalize_name(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    text = text.replace(",", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.lower()
+
+
+def parse_date(value: Any) -> Optional[date]:
+    text = clean_text(value)
+    if not text:
+        return None
+    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            pass
+    m = DATE_RE.search(text)
+    if m:
+        try:
+            return datetime.strptime(m.group(0), "%m/%d/%Y").date()
+        except ValueError:
+            return None
+    return None
+
+
+def parse_money(value: Any) -> Optional[float]:
+    text = clean_text(value)
+    if not text:
+        return None
+    m = MONEY_RE.search(text)
+    raw = m.group(1) if m else text
+    raw = raw.replace("$", "").replace(",", "").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def today_local() -> date:
+    return datetime.now().date()
+
+
+def make_driver(visible: bool = False) -> webdriver.Chrome:
+    options = Options()
+    if not visible:
+        options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1600,1200")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    driver.set_page_load_timeout(60)
+    return driver
+
+
+def save_debug(driver: webdriver.Chrome, source_name: str, label: str, include_screenshot: bool = True) -> None:
+    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)[:120]
+    html_path = DEBUG_DIR / f"{source_name}_{safe_label}_{ts}.html"
+    html_path.write_text(driver.page_source or "", encoding="utf-8", errors="ignore")
+    print(f"  [debug] page source: {html_path}")
+    if include_screenshot:
+        try:
+            png_path = DEBUG_DIR / f"{source_name}_{safe_label}_{ts}.png"
+            driver.save_screenshot(str(png_path))
+            print(f"  [debug] screenshot: {png_path}")
+        except Exception:
+            pass
+
+
+def dump_page_inventory(driver: webdriver.Chrome, source_name: str, label: str) -> None:
+    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)[:120]
+    path = DEBUG_DIR / f"{source_name}_{safe_label}_inventory_{ts}.txt"
+    lines: List[str] = []
+    try:
+        fields = driver.find_elements(By.XPATH, "//input|//select|//textarea|//button|//a")
+        for i, el in enumerate(fields, start=1):
+            try:
+                lines.append(
+                    f"#{i}\ttag={el.tag_name}\tid={el.get_attribute('id')}\tname={el.get_attribute('name')}\t"
+                    f"type={el.get_attribute('type')}\ttext={clean_text(el.text)[:120]}\t"
+                    f"value={clean_text(el.get_attribute('value'))[:120]}\t"
+                    f"href={el.get_attribute('href')}"
+                )
+            except Exception as exc:
+                lines.append(f"#{i}\t<inventory error: {exc}>")
+    except Exception as exc:
+        lines.append(f"Inventory failed: {exc}")
+    path.write_text("\n".join(lines), encoding="utf-8", errors="ignore")
+    print(f"  [debug] inventory: {path}")
+
+
+def load_sources() -> List[Dict[str, Any]]:
+    if CONFIG_PATH.exists():
+        try:
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("sources"), list):
+                return data["sources"]
+            if isinstance(data, list):
+                return data
+        except Exception as exc:
+            print(f"[warn] Could not read config {CONFIG_PATH}: {exc}")
+    return DEFAULT_SOURCES
+
+
+def open_general_search(driver: webdriver.Chrome, url: str) -> None:
+    driver.get(url)
+    time.sleep(4)
+    # Some Accela portals land on a message/disclaimer page.
+    try_accept_disclaimer(driver)
+    time.sleep(1)
+
+
+def try_accept_disclaimer(driver: webdriver.Chrome) -> None:
+    xpaths = [
+        "//input[contains(translate(@value,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]",
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]",
+        "//a[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]",
+        "//input[contains(translate(@value,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'continue')]",
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'continue')]",
+    ]
+    for xp in xpaths:
+        try:
+            el = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xp)))
+            el.click()
+            time.sleep(2)
+            return
+        except Exception:
+            continue
+
+
+def smart_find_date_input(driver: webdriver.Chrome, kind: str):
+    """Find Accela date inputs without relying on one exact ID."""
+    kind_lower = kind.lower()
+    if kind_lower.startswith("start"):
+        patterns = [
+            "startdate", "start_date", "datefrom", "date_from", "fromdate", "from_date",
+            "ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate", "GSStartDate",
+        ]
+        label_words = ["start date", "from"]
+    else:
+        patterns = [
+            "enddate", "end_date", "dateto", "date_to", "todate", "to_date",
+            "ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate", "GSEndDate",
+        ]
+        label_words = ["end date", "to"]
+
+    inputs = driver.find_elements(By.XPATH, "//input[not(@type='hidden') and not(@type='submit') and not(@type='button')]")
+    candidates = []
+    for el in inputs:
+        attrs = " ".join(
+            clean_text(el.get_attribute(a)).lower()
+            for a in ("id", "name", "placeholder", "title", "aria-label", "class", "value")
+        )
+        if any(p.lower() in attrs for p in patterns):
+            candidates.append(el)
+
+    if candidates:
+        return candidates[0]
+
+    # Fallback: locate by nearby label text.
+    for word in label_words:
+        xp = f"//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'{word}')]/following::input[not(@type='hidden')][1]"
+        try:
+            return driver.find_element(By.XPATH, xp)
+        except NoSuchElementException:
+            pass
+
+    # Final fallback: visible text fields that currently contain a date or look like date fields.
+    date_like = []
+    for el in inputs:
+        val = clean_text(el.get_attribute("value"))
+        size = clean_text(el.get_attribute("size"))
+        max_len = clean_text(el.get_attribute("maxlength"))
+        if DATE_RE.search(val) or size in {"10", "12"} or max_len in {"10", "12"}:
+            date_like.append(el)
+    if len(date_like) >= 2:
+        return date_like[0] if kind_lower.startswith("start") else date_like[1]
+
+    raise NoSuchElementException(f"Could not find {kind} date input")
+
+
+def set_input_value(driver: webdriver.Chrome, element, value: str) -> None:
+    """Accela date fields may be masked. Verify final value sticks."""
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", element)
+    time.sleep(0.2)
+    try:
+        driver.execute_script("arguments[0].removeAttribute('readonly'); arguments[0].removeAttribute('disabled');", element)
+    except Exception:
+        pass
+
+    for _ in range(3):
+        try:
+            element.click()
+            time.sleep(0.1)
+            element.send_keys(Keys.CONTROL, "a")
+            element.send_keys(Keys.BACKSPACE)
+            element.send_keys(value)
+            element.send_keys(Keys.TAB)
+            time.sleep(0.4)
+            current = clean_text(element.get_attribute("value"))
+            if current == value:
+                return
+        except Exception:
+            pass
+
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        const val = arguments[1];
+        el.focus();
+        el.value = val;
+        el.setAttribute('value', val);
+        ['keydown','keypress','keyup','input','change','blur'].forEach(name => {
+            el.dispatchEvent(new Event(name, { bubbles: true }));
+        });
+        """,
+        element,
+        value,
+    )
+    time.sleep(0.5)
+    current = clean_text(element.get_attribute("value"))
+    if current != value:
+        raise RuntimeError(f"Could not set input value. Wanted {value}, got {current}")
+
+
+def set_search_dates(driver: webdriver.Chrome, start: date, end: date, source_name: str = "source") -> None:
+    start_text = start.strftime("%m/%d/%Y")
+    end_text = end.strftime("%m/%d/%Y")
+    try:
+        start_el = smart_find_date_input(driver, "start")
+        end_el = smart_find_date_input(driver, "end")
+        set_input_value(driver, start_el, start_text)
+        set_input_value(driver, end_el, end_text)
+        actual_start = clean_text(start_el.get_attribute("value"))
+        actual_end = clean_text(end_el.get_attribute("value"))
+        print(f"  [dates] requested {start_text} to {end_text}")
+        print(f"  [dates] actual    {actual_start} to {actual_end}")
+        if actual_start != start_text or actual_end != end_text:
+            save_debug(driver, source_name, "date_values_wrong_after_fill")
+            dump_page_inventory(driver, source_name, "date_values_wrong_after_fill")
+            raise RuntimeError(f"Date fields did not stick. Expected {start_text}-{end_text}, got {actual_start}-{actual_end}")
+    except Exception:
+        save_debug(driver, source_name, "date_fields_not_found")
+        dump_page_inventory(driver, source_name, "date_fields_not_found")
+        raise
+
+
+def maybe_select_record_type(driver: webdriver.Chrome, contains_text: Optional[str]) -> None:
+    if not contains_text:
+        return
+    target = contains_text.lower()
+    # Select dropdowns first.
+    for sel in driver.find_elements(By.TAG_NAME, "select"):
+        try:
+            options = sel.find_elements(By.TAG_NAME, "option")
+            for opt in options:
+                if target in clean_text(opt.text).lower():
+                    opt.click()
+                    time.sleep(0.5)
+                    print(f"  [filter] selected record type: {clean_text(opt.text)}")
+                    return
+        except Exception:
+            continue
+    # Fallback for Accela custom dropdown/input.
+    try:
+        candidates = driver.find_elements(By.XPATH, "//input|//textarea")
+        for el in candidates:
+            attrs = " ".join(clean_text(el.get_attribute(a)).lower() for a in ("id", "name", "placeholder", "title", "aria-label"))
+            if "record" in attrs and "type" in attrs:
+                set_input_value(driver, el, contains_text)
+                print(f"  [filter] typed record type: {contains_text}")
+                return
+    except Exception:
+        pass
+
+
+def click_search(driver: webdriver.Chrome) -> None:
+    xpaths = [
+        "//input[contains(translate(@value,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'search')]",
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'search')]",
+        "//a[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'search')]",
+        "//*[contains(@id,'btnSearch') or contains(@name,'btnSearch')]",
+    ]
+    for xp in xpaths:
+        try:
+            el = WebDriverWait(driver, 8).until(EC.element_to_be_clickable((By.XPATH, xp)))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+            time.sleep(0.2)
+            el.click()
+            time.sleep(5)
+            return
+        except Exception:
+            continue
+    raise NoSuchElementException("Could not find Search button")
+
+
+def extract_result_links(driver: webdriver.Chrome) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """Return unique permit detail links visible on the current results page."""
+    rows = driver.find_elements(By.XPATH, "//tr[.//a[contains(@href,'CapDetail') or contains(@href,'capID')]]")
+    found: List[Tuple[str, str, Dict[str, Any]]] = []
+
+    if rows:
+        for row in rows:
+            try:
+                link = row.find_element(By.XPATH, ".//a[contains(@href,'CapDetail') or contains(@href,'capID')]")
+                href = link.get_attribute("href")
+                text = clean_text(link.text)
+                row_text = clean_text(row.text)
+                permit_number = extract_permit_number(text) or extract_permit_number(row_text)
+                if not permit_number or not href:
+                    continue
+                cells = [clean_text(td.text) for td in row.find_elements(By.XPATH, ".//td")]
+                payload = {f"cell_{i}": val for i, val in enumerate(cells, start=1) if val}
+                payload["row_text"] = row_text
+                found.append((permit_number, href, payload))
+            except Exception:
+                continue
+    else:
+        links = driver.find_elements(By.XPATH, "//a[contains(@href,'CapDetail') or contains(@href,'capID')]")
+        for link in links:
+            href = link.get_attribute("href")
+            text = clean_text(link.text)
+            around = text
+            try:
+                around = clean_text(link.find_element(By.XPATH, "./ancestor::tr[1]").text)
+            except Exception:
+                pass
+            permit_number = extract_permit_number(text) or extract_permit_number(around)
+            if permit_number and href:
+                found.append((permit_number, href, {"row_text": around}))
+
+    # De-dupe by URL and permit number, preserving order.
+    out: List[Tuple[str, str, Dict[str, Any]]] = []
+    seen = set()
+    for permit_number, href, payload in found:
+        key = (permit_number, href)
+        if key not in seen:
+            seen.add(key)
+            out.append((permit_number, href, payload))
+    return out
+
+
+def extract_permit_number(text: Any) -> Optional[str]:
+    m = PERMIT_NUMBER_RE.search(clean_text(text).upper())
+    return m.group(0).upper() if m else None
+
+
+def next_results_page(driver: webdriver.Chrome) -> bool:
+    """Click next page if available. Returns True if navigation was attempted."""
+    xpaths = [
+        "//a[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'next') and not(contains(@class,'disabled'))]",
+        "//input[contains(translate(@value,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'next') and not(@disabled)]",
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'next') and not(@disabled)]",
+        "//*[contains(@title,'Next') or contains(@aria-label,'Next')]",
+    ]
+    for xp in xpaths:
+        try:
+            el = driver.find_element(By.XPATH, xp)
+            if not el.is_displayed() or not el.is_enabled():
+                continue
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+            time.sleep(0.2)
+            el.click()
+            time.sleep(5)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def extract_text_map(html: str) -> Dict[str, Any]:
+    """Extract useful Accela field values from rendered HTML/text."""
+    # Selenium page_source is enough because Accela renders text into DOM.
+    # Use BeautifulSoup if available; otherwise fallback to regex-ish text parsing.
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        text = clean_text(soup.get_text(" "))
+    except Exception:
+        text = clean_text(re.sub(r"<[^>]+>", " ", html))
+
+    payload: Dict[str, Any] = {"full_text": text}
+
+    def after(label: str, stop_labels: Sequence[str] = ()) -> Optional[str]:
+        label_re = re.escape(label)
+        if stop_labels:
+            stop_re = "|".join(re.escape(s) for s in stop_labels)
+            pattern = rf"{label_re}\s*:?\s*(.*?)(?=\s+(?:{stop_re})\s*:?|$)"
+        else:
+            pattern = rf"{label_re}\s*:?\s*(.*?)(?=$)"
+        m = re.search(pattern, text, flags=re.I)
+        if m:
+            return clean_text(m.group(1))[:1000]
+        return None
+
+    record_match = re.search(r"Record\s+([A-Z]{1,3}\d{2}-\d{4,6}(?:\.\d{3})?)\s*:\s*([^|]+?)\s+Record Status\s*:\s*([^|]+?)\s", text, flags=re.I)
+    if record_match:
+        payload["record_number"] = record_match.group(1).upper()
+        payload["record_type"] = clean_text(record_match.group(2))
+        payload["status"] = clean_text(record_match.group(3))
+
+    work_loc = after("Work Location", ["Record Details", "Applicant", "Licensed Professional"])
+    if work_loc:
+        payload["address"] = cleanup_address(work_loc)
+
+    owner = after("Owner", ["More Details", "Related Contacts", "Valuation", "Application Information", "Parcel Information"])
+    if owner:
+        payload["owner"] = cleanup_owner(owner)
+
+    applicant = after("Applicant", ["Licensed Professional", "Project Description", "Owner", "More Details"])
+    if applicant:
+        payload["applicant"] = applicant
+
+    licensed = after("Licensed Professional", ["Project Description", "Owner", "More Details", "Related Contacts", "Valuation"])
+    if licensed:
+        payload["contractor"] = cleanup_contractor(licensed)
+
+    description = after("Project Description", ["Owner", "More Details", "Related Contacts", "Valuation", "Application Information"])
+    if description:
+        payload["description"] = description
+
+    value_match = re.search(r"Job Value\s*\(\$\)\s*:\s*\$?\s*([\d,]+(?:\.\d{2})?)", text, flags=re.I)
+    if value_match:
+        payload["valuation"] = value_match.group(1)
+
+    parcel_match = re.search(r"Parcel Number\s*:\s*([A-Za-z0-9-]+)", text, flags=re.I)
+    if parcel_match:
+        payload["parcel_number"] = parcel_match.group(1)
+
+    # Emails/phones can help contractor enrichment.
+    emails = sorted(set(re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", text, flags=re.I)))
+    if emails:
+        payload["emails"] = emails
+
+    return payload
+
+
+def cleanup_address(value: Any) -> str:
+    text = clean_text(value)
+    text = re.sub(r"\s+\*.*$", "", text).strip()
+    text = text.replace(",", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.lower()
+
+
+def cleanup_owner(value: Any) -> str:
+    text = clean_text(value)
+    text = re.sub(r"\s+\*.*$", "", text).strip()
+    text = re.sub(r"\s+More Details.*$", "", text, flags=re.I).strip()
+    return normalize_name(text)
+
+
+def cleanup_contractor(value: Any) -> str:
+    text = clean_text(value)
+    # Keep first useful chunk: name + email/company often appears before address/phone.
+    text = re.split(r"\s+(?:Business Phone|Mobile Phone|Phone|Mechanical|Electrical|Plumbing|Contractor|Roofing|General)\s*:?", text, flags=re.I)[0]
+    return clean_text(text)[:300]
+
+
+def guess_from_row(record_number: str, row_data: Dict[str, Any]) -> Dict[str, Any]:
+    values = [clean_text(v) for k, v in row_data.items() if str(k).startswith("cell_") and clean_text(v)]
+    row_text = clean_text(row_data.get("row_text"))
+    joined = " | ".join(values) or row_text
+    out: Dict[str, Any] = {"permit_number": record_number}
+    if values:
+        # Common Accela columns: record, date, record type, application type, address, status, action, description.
+        if len(values) >= 2:
+            out["issued_date"] = values[1]
+        if len(values) >= 3:
+            out["permit_type"] = values[2]
+        if len(values) >= 4:
+            out["sub_type"] = values[3]
+        if len(values) >= 5:
+            out["address_1"] = cleanup_address(values[4])
+        if len(values) >= 6:
+            out["status"] = values[5]
+        if len(values) >= 8:
+            out["description"] = values[7]
+    else:
+        d = parse_date(joined)
+        if d:
+            out["issued_date"] = d.isoformat()
+    out["joined"] = joined
+    return out
+
+
+def pick_accela_description(payload: Dict[str, Any], row_guess: Dict[str, Any]) -> Optional[str]:
+    for key in ("description", "cell_8", "project_description"):
+        val = clean_text(payload.get(key) or row_guess.get(key))
+        if val and val.lower() != "add" and not is_junk_text(val):
+            return val
+    for key in ("cell_4", "sub_type", "cell_3", "permit_type", "record_type"):
+        val = clean_text(payload.get(key) or row_guess.get(key))
+        if val and val.lower() != "add" and not is_junk_text(val):
+            return val
+    full = clean_text(payload.get("full_text"))
+    m = re.search(r"Project Description\s*:\s*(.*?)(?=\s+Owner\s*:|\s+More Details\b|\s+Valuation\b)", full, flags=re.I)
+    if m:
+        val = clean_text(m.group(1))
+        if val and val.lower() != "add":
+            return val
+    return None
+
+
+def pick_accela_permit_type(payload: Dict[str, Any], row_guess: Dict[str, Any]) -> Optional[str]:
+    for key in ("record_type", "cell_3", "permit_type", "cell_4", "sub_type"):
+        val = clean_text(payload.get(key) or row_guess.get(key))
+        if val and not is_junk_text(val):
+            return val
+    return None
+
+
+def is_junk_text(value: Any) -> bool:
+    text = clean_text(value).lower()
+    if not text:
+        return True
+    if text in JUNK_RECORD_LABELS:
+        return True
+    junk_fragments = [
+        "search by record information",
+        "search by licensed professional information",
+        "enter information below to search",
+        "pay fine",
+        "permit fee",
+        "inspection",
+    ]
+    return any(j in text for j in junk_fragments)
+
+
+def normalize_record(rec: PermitRecord) -> Optional[PermitRecord]:
+    permit = clean_text(rec.permit_number).upper()
+    if not extract_permit_number(permit):
+        return None
+    if permit.lower() in JUNK_RECORD_LABELS:
+        return None
+    rec.permit_number = permit
+
+    if rec.address_1:
+        rec.address_1 = cleanup_address(rec.address_1)
+    else:
+        # Try address from row/detail payload.
+        payload = rec.raw_payload or {}
+        for key in ("address", "cell_5", "cell_11"):
+            if payload.get(key):
+                rec.address_1 = cleanup_address(payload.get(key))
+                break
+
+    if rec.owner_name:
+        rec.owner_name = cleanup_owner(rec.owner_name)
+    else:
+        payload = rec.raw_payload or {}
+        if payload.get("owner"):
+            rec.owner_name = cleanup_owner(payload.get("owner"))
+
+    if rec.business_name:
+        rec.business_name = cleanup_contractor(rec.business_name)
+    else:
+        payload = rec.raw_payload or {}
+        if payload.get("contractor"):
+            rec.business_name = cleanup_contractor(payload.get("contractor"))
+
+    if not rec.project_description or clean_text(rec.project_description).lower() == "add":
+        rec.project_description = pick_accela_description(rec.raw_payload or {}, {})
+
+    if not rec.permit_type:
+        rec.permit_type = pick_accela_permit_type(rec.raw_payload or {}, {})
+
+    if not rec.issued_date:
+        payload = rec.raw_payload or {}
+        for key in ("cell_2", "issued_date", "issue_date", "opened_date"):
+            if payload.get(key):
+                rec.issued_date = parse_date(payload.get(key))
+                if rec.issued_date:
+                    break
+
+    if not rec.status:
+        payload = rec.raw_payload or {}
+        rec.status = clean_text(payload.get("status") or payload.get("cell_6")) or None
+
+    if rec.valuation is None:
+        payload = rec.raw_payload or {}
+        rec.valuation = parse_money(payload.get("valuation"))
+
+    return rec
+
+
+def scrape_source(source: Dict[str, Any], start: date, end: date, visible: bool, limit: int, pages: int, debug_pages: bool = False) -> List[PermitRecord]:
+    source_name = source["name"]
+    jurisdiction = source.get("jurisdiction") or COUNTY_NAME
+    driver = make_driver(visible=visible)
+    records: List[PermitRecord] = []
+    seen_detail_urls = set()
+    seen_page_signatures = set()
+
+    try:
+        print(f"[source] {source_name}: {start} to {end}")
+        open_general_search(driver, source["base_url"])
+
+        if debug_pages:
+            save_debug(driver, source_name, "01_search_form_loaded")
+            dump_page_inventory(driver, source_name, "01_search_form_loaded")
+
+        set_search_dates(driver, start, end, source_name=source_name)
+        maybe_select_record_type(driver, source.get("record_type_contains"))
+
+        if debug_pages:
+            save_debug(driver, source_name, "02_search_form_filled")
+
+        click_search(driver)
+
+        if debug_pages:
+            save_debug(driver, source_name, "03_after_search_click")
+            dump_page_inventory(driver, source_name, "03_after_search_click")
+
+        for page_num in range(1, pages + 1):
+            if debug_pages:
+                save_debug(driver, source_name, f"results_page_{page_num:03d}", include_screenshot=False)
+
+            links = extract_result_links(driver)
+            page_signature = tuple(sorted(url for _, url, _ in links))
+            if page_signature and page_signature in seen_page_signatures:
+                print(f"  page {page_num}: repeated result page detected; stopping pagination")
+                break
+            if page_signature:
+                seen_page_signatures.add(page_signature)
+
+            new_links = []
+            for record_number, detail_url, row_data in links:
+                if detail_url not in seen_detail_urls:
+                    seen_detail_urls.add(detail_url)
+                    new_links.append((record_number, detail_url, row_data))
+
+            print(f"  page {page_num}: {len(links)} link(s), {len(new_links)} new unique link(s)")
+
+            if debug_pages:
+                audit_path = DEBUG_DIR / f"{source_name}_result_links_page_{page_num:03d}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                audit_path.write_text("\n".join(f"{rn}\t{url}" for rn, url, _ in links), encoding="utf-8", errors="ignore")
+                print(f"  [debug] result links: {audit_path}")
+
+            if not links:
+                if debug_pages:
+                    save_debug(driver, source_name, "no_results")
+                break
+            if not new_links:
+                print(f"  page {page_num}: no new links; stopping pagination")
+                break
+
+            for record_number, detail_url, row_data in new_links:
+                if limit and len(records) >= limit:
+                    print(f"  {source_name} unique records collected before import: {len(records)}")
+                    return records
+
+                row_guess = guess_from_row(record_number, row_data)
+                detail_payload = dict(row_data)
+                detail_payload.update(row_guess)
+                detail_payload["detail_url"] = detail_url
+
+                try:
+                    driver.get(detail_url)
+                    time.sleep(3)
+                    if debug_pages and len(records) < 10:
+                        save_debug(driver, source_name, f"detail_{record_number}", include_screenshot=False)
+                    detail_payload.update(extract_text_map(driver.page_source))
+                except Exception as exc:
+                    detail_payload["detail_error"] = str(exc)
+
+                rec = PermitRecord(
+                    source_name=source_name,
+                    jurisdiction=jurisdiction,
+                    permit_number=record_number,
+                    permit_type=pick_accela_permit_type(detail_payload, row_guess),
+                    project_description=pick_accela_description(detail_payload, row_guess),
+                    address_1=detail_payload.get("address") or row_guess.get("address_1"),
+                    owner_name=detail_payload.get("owner"),
+                    business_name=detail_payload.get("contractor"),
+                    issued_date=parse_date(detail_payload.get("cell_2") or row_guess.get("issued_date")),
+                    status=detail_payload.get("status") or row_guess.get("status"),
+                    valuation=parse_money(detail_payload.get("valuation")),
+                    raw_url=detail_url,
+                    raw_payload=detail_payload,
+                )
+
+                rec = normalize_record(rec)
+                if rec:
+                    records.append(rec)
+
+                try:
+                    driver.back()
+                    time.sleep(2)
+                except Exception:
+                    # If back fails, reopen search could be added later. For now continue.
+                    pass
+
+            if limit and len(records) >= limit:
+                break
+            if not next_results_page(driver):
+                break
+
+    except Exception as exc:
+        print(f"  [error] {source_name}: {exc}")
+        try:
+            save_debug(driver, source_name, "error")
+            dump_page_inventory(driver, source_name, "error")
+        except Exception:
+            pass
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+    print(f"  {source_name} unique records collected before import: {len(records)}")
+    return records
+
+
+def table_columns(cur, table_name: str) -> set:
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s
+        """,
+        (table_name,),
+    )
+    return {r[0] for r in cur.fetchall()}
+
+
+def get_county_id(cur) -> int:
+    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='counties'")
+    cols = {r[0] for r in cur.fetchall()}
+    if "county_name" in cols:
+        cur.execute("SELECT id FROM counties WHERE lower(county_name)=lower(%s) AND state=%s LIMIT 1", (COUNTY_NAME, COUNTY_STATE))
+    elif "name" in cols:
+        cur.execute("SELECT id FROM counties WHERE lower(name)=lower(%s) LIMIT 1", (COUNTY_NAME,))
+    else:
+        return DEFAULT_COUNTY_ID
+    row = cur.fetchone()
+    if row:
+        return int(row[0])
+    # Insert if possible.
+    if {"county_name", "state"}.issubset(cols):
+        cur.execute(
+            "INSERT INTO counties (county_name, state, active) VALUES (%s, %s, true) RETURNING id",
+            (COUNTY_NAME, COUNTY_STATE),
+        )
+        return int(cur.fetchone()[0])
+    return DEFAULT_COUNTY_ID
+
+
+def insert_raw_permit(cur, county_id: int, rec: PermitRecord) -> str:
+    cols = table_columns(cur, "raw_permits")
+    source_record_id = f"{rec.source_name}:{rec.permit_number}"
+    payload = rec.raw_payload or {}
+    payload.update({
+        "permit_number": rec.permit_number,
+        "permit_type": rec.permit_type,
+        "project_description": rec.project_description,
+        "address_1": rec.address_1,
+        "owner_name": rec.owner_name,
+        "business_name": rec.business_name,
+        "issued_date": rec.issued_date.isoformat() if rec.issued_date else None,
+        "status": rec.status,
+        "valuation": rec.valuation,
+        "raw_url": rec.raw_url,
+    })
+
+    values: Dict[str, Any] = {}
+    if "county_id" in cols:
+        values["county_id"] = county_id
+    if "source_name" in cols:
+        values["source_name"] = rec.source_name
+    elif "source" in cols:
+        values["source"] = rec.source_name
+    if "source_record_id" in cols:
+        values["source_record_id"] = source_record_id
+    if "raw_payload" in cols:
+        values["raw_payload"] = Json(payload)
+    if "permit_date" in cols:
+        values["permit_date"] = rec.issued_date
+    if "created_at" in cols:
+        values["created_at"] = datetime.now()
+    if "updated_at" in cols:
+        values["updated_at"] = datetime.now()
+
+    insert_cols = list(values.keys())
+    placeholders = ", ".join(["%s"] * len(insert_cols))
+    col_sql = ", ".join(insert_cols)
+
+    conflict_cols = []
+    if {"county_id", "source_record_id"}.issubset(cols):
+        conflict_cols = ["county_id", "source_record_id"]
+
+    if conflict_cols:
+        update_cols = [c for c in insert_cols if c not in conflict_cols and c != "created_at"]
+        update_sql = ", ".join([f"{c}=EXCLUDED.{c}" for c in update_cols]) or "source_record_id=EXCLUDED.source_record_id"
+        sql = f"""
+            INSERT INTO raw_permits ({col_sql})
+            VALUES ({placeholders})
+            ON CONFLICT ({', '.join(conflict_cols)})
+            DO UPDATE SET {update_sql}
+        """
+    else:
+        sql = f"INSERT INTO raw_permits ({col_sql}) VALUES ({placeholders})"
+
+    cur.execute(sql, [values[c] for c in insert_cols])
+    return source_record_id
+
+
+def insert_normalized_permit(cur, county_id: int, rec: PermitRecord) -> None:
+    cols = table_columns(cur, "normalized_permits")
+
+    values: Dict[str, Any] = {}
+    mapping = {
+        "county_id": county_id,
+        "permit_number": rec.permit_number,
+        "permit_type": rec.permit_type,
+        "project_description": rec.project_description,
+        "description": rec.project_description,
+        "address_1": rec.address_1,
+        "property_address": rec.address_1,
+        "owner_name": rec.owner_name,
+        "business_name": rec.business_name,
+        "contractor_name": rec.business_name,
+        "issued_date": rec.issued_date,
+        "issue_date": rec.issued_date,
+        "status": rec.status,
+        "valuation": rec.valuation,
+        "created_at": datetime.now(),
+        "updated_at": datetime.now(),
+    }
+    for col, val in mapping.items():
+        if col in cols:
+            values[col] = val
+
+    required = {"county_id", "permit_number"}
+    if not required.issubset(values.keys()):
+        raise RuntimeError("normalized_permits must have county_id and permit_number columns")
+
+    insert_cols = list(values.keys())
+    placeholders = ", ".join(["%s"] * len(insert_cols))
+    col_sql = ", ".join(insert_cols)
+
+    # Existing schema uses UNIQUE(county_id, permit_number). Keep compatibility.
+    conflict_cols = ["county_id", "permit_number"]
+    update_cols = [c for c in insert_cols if c not in conflict_cols and c != "created_at"]
+    update_sql = ", ".join([f"{c}=EXCLUDED.{c}" for c in update_cols]) or "permit_number=EXCLUDED.permit_number"
+
+    sql = f"""
+        INSERT INTO normalized_permits ({col_sql})
+        VALUES ({placeholders})
+        ON CONFLICT ({', '.join(conflict_cols)})
+        DO UPDATE SET {update_sql}
+    """
+    cur.execute(sql, [values[c] for c in insert_cols])
+
+
+def import_records(records: List[PermitRecord]) -> Dict[str, int]:
+    stats = {
+        "records_scraped": len(records),
+        "raw_inserted_or_updated": 0,
+        "normalized_inserted_or_updated": 0,
+        "skipped_no_permit": 0,
+        "errors": 0,
+    }
+    if not records:
+        return stats
+
+    conn = get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                county_id = get_county_id(cur)
+                for rec in records:
+                    if not rec.permit_number:
+                        stats["skipped_no_permit"] += 1
+                        continue
+                    try:
+                        insert_raw_permit(cur, county_id, rec)
+                        stats["raw_inserted_or_updated"] += 1
+                        insert_normalized_permit(cur, county_id, rec)
+                        stats["normalized_inserted_or_updated"] += 1
+                    except Exception as exc:
+                        stats["errors"] += 1
+                        print(f"  [import error] {rec.permit_number}: {exc}")
+                        conn.rollback()
+                        # Re-open transaction for next rows.
+                        conn.autocommit = False
+    finally:
+        conn.close()
+    return stats
+
+
+def save_raw_snapshot(records: List[PermitRecord]) -> Optional[Path]:
+    if not records:
+        return None
+    RAW_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    path = RAW_EXPORT_DIR / f"broward_accela_permits_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    data = []
+    for rec in records:
+        item = asdict(rec)
+        if isinstance(item.get("issued_date"), date):
+            item["issued_date"] = item["issued_date"].isoformat()
+        data.append(item)
+    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    print(f"Raw Broward permit snapshot saved: {path}")
+    return path
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Scrape Broward municipal Accela permits into leadflow.")
+    parser.add_argument("--days-back", type=int, default=7)
+    parser.add_argument("--start", type=str, default=None, help="YYYY-MM-DD")
+    parser.add_argument("--end", type=str, default=None, help="YYYY-MM-DD")
+    parser.add_argument("--visible", action="store_true", help="Show Chrome window")
+    parser.add_argument("--limit", type=int, default=25, help="0 means no limit")
+    parser.add_argument("--pages", type=int, default=10)
+    parser.add_argument("--source", type=str, default=None, help="Run one source by name")
+    parser.add_argument("--all-broward", action="store_true", help="Run all configured Broward sources")
+    parser.add_argument("--debug-pages", action="store_true", help="Save page sources, screenshots, and link audits")
+    return parser.parse_args()
+
+
+def resolve_dates(args: argparse.Namespace) -> Tuple[date, date]:
+    if args.start:
+        start = datetime.strptime(args.start, "%Y-%m-%d").date()
+    else:
+        start = today_local() - timedelta(days=args.days_back)
+    if args.end:
+        end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    else:
+        end = today_local()
+    return start, end
+
+
+def main() -> None:
+    args = parse_args()
+    start, end = resolve_dates(args)
+    all_sources = load_sources()
+
+    if args.source:
+        sources = [s for s in all_sources if s.get("name") == args.source]
+        if not sources:
+            raise SystemExit(f"Unknown source: {args.source}. Available: {', '.join(s.get('name','') for s in all_sources)}")
+    elif args.all_broward:
+        sources = all_sources
+    else:
+        sources = [s for s in all_sources if s.get("name") == "weston_accela"] or all_sources[:1]
+
+    print(f"Running {len(sources)} Broward source(s): {', '.join(s['name'] for s in sources)}")
+
+    all_records: List[PermitRecord] = []
+    for source in sources:
+        recs = scrape_source(
+            source=source,
+            start=start,
+            end=end,
+            visible=args.visible,
+            limit=args.limit,
+            pages=args.pages,
+            debug_pages=args.debug_pages,
+        )
+        all_records.extend(recs)
+
+    # De-dupe across sources by source+permit number.
+    unique: List[PermitRecord] = []
+    seen = set()
+    for rec in all_records:
+        key = (rec.source_name, rec.permit_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(rec)
+
+    save_raw_snapshot(unique)
+    stats = import_records(unique)
+
+    print("\n--- Broward permit scrape/import summary ---")
+    print(f"  sources_run                 : {len(sources)}")
+    print(f"  unique_records_collected    : {len(unique)}")
+    for key, val in stats.items():
+        print(f"  {key:<27}: {val}")
+
+
+if __name__ == "__main__":
+    main()

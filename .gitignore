@@ -1,0 +1,11 @@
+﻿data/
+*.pdf
+*.json
+__pycache__/
+*.pyc
+.env
+debug/
+downloads/
+*.png
+*.html
+logs/

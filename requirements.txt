@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+psycopg2-binary
+pandas
+python-dotenv
+requests
+paramiko
+reportlab
+pypdf
+selenium
+webdriver-manager
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+pydantic
+beautifulsoup4
+stripe
