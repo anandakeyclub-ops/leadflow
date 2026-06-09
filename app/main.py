@@ -1,0 +1,35 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="LeadFlow API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://taxcasereview.org", "http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "leadflow-api"}
+
+# Bookings
+try:
+    from app.api.bookings.calendly_booking_api import router as bookings_router
+    app.include_router(bookings_router)
+except Exception as e:
+    print(f"Warning: bookings router not loaded: {e}")
+
+# Tracking
+try:
+    from app.api.routes.tracking import router as tracking_router
+    app.include_router(tracking_router)
+except Exception as e:
+    print(f"Warning: tracking router not loaded: {e}")
+
+try:
+    from app.api.routes.click_tracking import router as click_router
+    app.include_router(click_router)
+except Exception as e:
+    print(f"Warning: click tracking router not loaded: {e}")
