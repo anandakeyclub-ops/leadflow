@@ -33,3 +33,16 @@ try:
     app.include_router(click_router)
 except Exception as e:
     print(f"Warning: click tracking router not loaded: {e}")
+
+# CRM pipeline — create lead/case/calendar appointment after a confirmed
+# Stripe payment. Called by the v0-tax-landing Stripe webhook.
+try:
+    from app.integrations.crm_pipeline import run_crm_pipeline
+
+    @app.post("/crm-pipeline")
+    async def crm_pipeline_endpoint(payload: dict):
+        booking_data = payload.get("booking_data", {})
+        payment_data = payload.get("payment_data", {})
+        return run_crm_pipeline(booking_data, payment_data)
+except Exception as e:
+    print(f"Warning: crm-pipeline endpoint not loaded: {e}")
