@@ -76,6 +76,90 @@ IL_CITY_COUNTY = {
     "des plaines": "Cook", "arlington heights": "Cook", "palatine": "Cook",
 }
 
+# ── CourtListener (federal docket API) — primary IL lien source, no WAF ────────
+COURTLISTENER_TOKEN = os.getenv("COURTLISTENER_TOKEN", "")
+CL_DOCKETS_URL = "https://www.courtlistener.com/api/rest/v4/dockets/"
+# IL federal district court id -> representative county (court seat).
+IL_FED_DISTRICTS = {"ilnd": "Cook", "ilcd": "Sangamon", "ilsd": "St. Clair"}
+
+
+# ── LIENS — CourtListener federal dockets (primary; no WAF) ────────────────────
+def _clean_cl_name(name: str) -> str:
+    """Strip the 'United States of America v.' prefix so the taxpayer/debtor
+    remains as the stored name."""
+    n = (name or "").strip()
+    n = re.sub(r"^(the\s+)?united states( of america)?\s+v\.?\s+", "", n, flags=re.I)
+    n = re.sub(r"^usa?\s+v\.?\s+", "", n, flags=re.I)
+    return n.strip() or (name or "").strip()
+
+
+def collect_il_liens_courtlistener(limit: int = IL_MAX_RECORDS,
+                                   dry_run: bool = False) -> int:
+    """
+    Query the CourtListener v4 dockets API for federal-tax-lien cases in the IL
+    federal districts (ilnd=Cook/Chicago, ilcd, ilsd), paginating via `next`,
+    and store them in normalized_liens (state='IL', lien_source='COURTLISTENER').
+    Needs COURTLISTENER_TOKEN (free registration at courtlistener.com); returns 0
+    if absent/unauthorized so the caller can fall back to the SOS UCC scraper.
+    """
+    token = COURTLISTENER_TOKEN or os.getenv("COURTLISTENER_TOKEN", "")
+    if not token:
+        print("    IL/CourtListener: COURTLISTENER_TOKEN not set. (0 liens)")
+        return 0
+    headers = {"Authorization": f"Token {token}",
+               "User-Agent": "TaxCaseReview/1.0 (research@taxcasereview.org)"}
+    limit = min(limit, IL_MAX_RECORDS)
+    all_rows: list[dict] = []
+    for court, county in IL_FED_DISTRICTS.items():
+        if len(all_rows) >= limit:
+            break
+        url = CL_DOCKETS_URL
+        params = {"description": "federal tax lien", "court": court,
+                  "page_size": 100}
+        pages = 0
+        while url and len(all_rows) < limit and pages < 20:
+            pages += 1
+            r = http_get(url, params=params, headers=headers, timeout=40)
+            params = None  # subsequent `next` URLs already carry the query
+            if r is None:
+                print(f"    IL/CourtListener: {court} unreachable.")
+                break
+            if r.status_code in (401, 403):
+                print(f"    IL/CourtListener: auth failed ({r.status_code}) — "
+                      "check COURTLISTENER_TOKEN. (0 liens)")
+                return 0
+            if r.status_code != 200:
+                print(f"    IL/CourtListener: {court} HTTP {r.status_code}.")
+                break
+            try:
+                j = r.json()
+            except ValueError:
+                break
+            for d in j.get("results", []):
+                name = _clean_cl_name(d.get("case_name") or "")
+                if len(name) < 3:
+                    continue
+                all_rows.append({
+                    "debtor_name": name,
+                    "filing_date": d.get("date_filed"),
+                    "file_number": (d.get("docket_number") or "").strip(),
+                    "county": county,
+                })
+            url = j.get("next")
+            time.sleep(IL_PAGE_DELAY)
+        print(f"    IL/CourtListener: {court} ({county}) -> "
+              f"{sum(1 for x in all_rows if x['county'] == county)} rows so far")
+
+    all_rows = all_rows[:limit]
+    if dry_run:
+        print(f"    [DRY RUN] {len(all_rows)} IL CourtListener liens parsed:")
+        for r in all_rows[:15]:
+            print(f"       {(r.get('debtor_name') or '')[:40]:<40} | "
+                  f"{r.get('county',''):<10} | {r.get('filing_date','')} | "
+                  f"{r.get('file_number','')}")
+        return len(all_rows)
+    return _store_il_liens(all_rows, lien_source="COURTLISTENER")
+
 
 # ── LIENS — IL Secretary of State UCC / Federal Tax Lien index (Selenium) ──────
 def collect_il_liens(limit: int = IL_MAX_RECORDS,
@@ -361,7 +445,7 @@ def _il_to_iso(s):
     return None
 
 
-def _store_il_liens(rows: list[dict]) -> int:
+def _store_il_liens(rows: list[dict], lien_source: str = "IL_SOS_UCC") -> int:
     conn = get_connection()
     conn.autocommit = False
     added = 0
@@ -370,10 +454,11 @@ def _store_il_liens(rows: list[dict]) -> int:
             name = (rec.get("debtor_name") or "").strip()
             if len(name) < 3:
                 continue
-            county_name = _il_city_to_county(rec.get("city"))
+            county_name = (rec.get("county") or "").strip() \
+                or _il_city_to_county(rec.get("city"))
             filed = _il_to_iso(rec.get("filing_date"))
             key = rec.get("file_number") or f"{name}|{rec.get('filing_date')}"
-            h = hashlib.md5(f"il_sos_ucc|{key}".encode()).hexdigest()
+            h = hashlib.md5(f"{lien_source.lower()}|{key}".encode()).hexdigest()
             with conn.cursor() as cur:
                 county_id = get_or_create_county(cur, county_name, "IL")
                 cur.execute("""
@@ -382,21 +467,21 @@ def _store_il_liens(rows: list[dict]) -> int:
                          lien_type, lien_source, normalized_hash, state,
                          amount, filed_date, city, zip, created_at)
                     VALUES (%s,%s,%s,'FEDERAL TAX LIEN','FEDERAL TAX LIEN',
-                            'IL_SOS_UCC',%s,'IL',%s,%s,%s,%s,NOW())
+                            %s,%s,'IL',%s,%s,%s,%s,NOW())
                     ON CONFLICT (normalized_hash) DO NOTHING
                     RETURNING id
                 """, (county_id, name[:250],
                       name[:250] if is_business(name) else None,
-                      h, rec.get("lien_amount"), filed,
+                      lien_source, h, rec.get("lien_amount"), filed,
                       (rec.get("city") or "")[:100] or None,
                       (rec.get("zip") or "")[:20] or None))
                 if cur.fetchone():
                     added += 1
             conn.commit()
-        print(f"    IL/SOS UCC: +{added} new IL liens")
+        print(f"    IL/{lien_source}: +{added} new IL liens")
     except Exception as e:
         conn.rollback()
-        print(f"    IL/SOS UCC store error: {e}")
+        print(f"    IL/{lien_source} store error: {e}")
     finally:
         release_connection(conn)
     return added
@@ -527,6 +612,8 @@ def main():
                     help="comma list (default: Organization,Individual)")
     ap.add_argument("--limit", type=int, default=IL_MAX_RECORDS)
     ap.add_argument("--no-headless", action="store_true")
+    ap.add_argument("--courtlistener", action="store_true",
+                    help="use the CourtListener federal docket API instead of SOS UCC")
     ap.add_argument("--licenses", action="store_true",
                     help="run the IDFPR license scrape instead of SOS UCC liens")
     args = ap.parse_args()
@@ -534,10 +621,13 @@ def main():
     if args.licenses:
         print(f"IL licenses: {collect_il_licenses(args.limit)}")
         return
-    dtypes = (tuple(t.strip() for t in args.debtor_types.split(",") if t.strip())
-              if args.debtor_types else IL_DEBTOR_TYPES)
-    n = collect_il_liens(limit=args.limit, debtor_types=dtypes,
-                         dry_run=args.dry_run, headless=not args.no_headless)
+    if args.courtlistener:
+        n = collect_il_liens_courtlistener(limit=args.limit, dry_run=args.dry_run)
+    else:
+        dtypes = (tuple(t.strip() for t in args.debtor_types.split(",") if t.strip())
+                  if args.debtor_types else IL_DEBTOR_TYPES)
+        n = collect_il_liens(limit=args.limit, debtor_types=dtypes,
+                             dry_run=args.dry_run, headless=not args.no_headless)
     tag = "(dry-run) " if args.dry_run else ""
     print(f"\nIL liens {tag}result: {n}")
 

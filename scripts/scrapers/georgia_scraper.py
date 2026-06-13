@@ -28,6 +28,7 @@ Credentials (optional, for a future authenticated/Selenium path) come from .env:
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sys
@@ -59,6 +60,9 @@ GSCCCA_INSTR_FTL   = "3"
 GSCCCA_PARTY_DEBTOR = "1"
 GA_LIEN_COUNTIES   = ["Fulton", "Gwinnett", "DeKalb", "Cobb"]
 GA_DEBUG_DIR       = LEADFLOW_DIR / "data" / "data_engine" / "ga_debug"
+# Saved authenticated cookies (so a manual login can be reused headlessly).
+# Lives under data/ which is gitignored — session cookies are never committed.
+GA_SESSION_FILE    = LEADFLOW_DIR / "data" / "data_engine" / "ga_session.json"
 
 # Contractor entity types we care about (search keywords).
 GA_CONTRACTOR_KEYWORDS = [
@@ -70,18 +74,22 @@ GA_CONTRACTOR_KEYWORDS = [
 # ── LIENS — GSCCCA (authenticated Selenium) ────────────────────────────────────
 def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
                      days_back: int = 3650, dry_run: bool = False,
-                     headless: bool = True) -> int:
+                     headless: bool = True, manual: bool = False,
+                     use_session: bool = False) -> int:
     """
-    Log into GSCCCA (GA_GSCCCA_USERNAME / GA_GSCCCA_PASSWORD) with Selenium,
-    run a Federal Tax Lien (instrument code 3) search per county
-    (default Fulton, Gwinnett, DeKalb, Cobb) over the last `days_back` days,
-    parse the debtor names, and store them in normalized_liens (state='GA').
-    dry_run parses + reports but does not write. Falls back to the HTTP probe
-    if credentials are absent. Returns count stored (or parsed, in dry_run).
+    Federal Tax Lien (instrument code 3) search on GSCCCA per county
+    (default Fulton, Gwinnett, DeKalb, Cobb), parsed into normalized_liens
+    (state='GA'). Authentication mode:
+      - use_session=True : reuse cookies saved by save_ga_session()/--manual
+                           (skips login; works headless).
+      - manual=True      : visible browser, creds pre-filled, pause for Dana to
+                           solve the CAPTCHA, then continue (and cache cookies).
+      - otherwise        : fully automated login (blocked by GSCCCA's CAPTCHA).
+    dry_run parses + reports without writing. Returns count stored (or parsed).
     """
     user = os.getenv("GA_GSCCCA_USERNAME")
     pw   = os.getenv("GA_GSCCCA_PASSWORD")
-    if not user or not pw:
+    if not use_session and (not user or not pw):
         print("    GA/GSCCCA: GA_GSCCCA_USERNAME/PASSWORD not set — HTTP fallback.")
         return _collect_ga_liens_http(limit)
 
@@ -89,11 +97,29 @@ def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
     driver = None
     all_rows: list[dict] = []
     try:
-        driver = _ga_get_driver(headless=headless)
-        if not _gsccca_login(driver, user, pw):
-            print("    GA/GSCCCA: login failed — see data/data_engine/ga_debug/.")
-            return 0
-        print("    GA/GSCCCA: logged in.")
+        # Manual mode needs a visible window so Dana can solve the CAPTCHA.
+        driver = _ga_get_driver(headless=(headless and not manual))
+
+        if use_session:
+            if not (_ga_load_cookies(driver) and _ga_session_valid(driver)):
+                print("    GA/GSCCCA: no valid saved session — run "
+                      "`--save-session` (or `--manual`) first. (0 liens)")
+                return 0
+            print("    GA/GSCCCA: authenticated via saved session.")
+        elif manual:
+            if not _gsccca_manual_login(driver, user, pw):
+                print("    GA/GSCCCA: manual login not confirmed. (0 liens)")
+                return 0
+            _ga_save_cookies(driver)  # cache so future runs can --use-session
+            print("    GA/GSCCCA: authenticated (manual).")
+        else:
+            if not _gsccca_login(driver, user, pw):
+                print("    GA/GSCCCA: login failed — see data/data_engine/ga_debug/."
+                      " (GSCCCA gates automated login behind a CAPTCHA; use "
+                      "--manual or --save-session/--use-session.)")
+                return 0
+            print("    GA/GSCCCA: logged in.")
+
         for county in counties:
             if len(all_rows) >= limit:
                 break
@@ -125,6 +151,108 @@ def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
                   f"{r.get('county',''):<10} | {r.get('date','')}")
         return len(all_rows)
     return _store_ga_liens(all_rows)
+
+
+# ── Option A: manual CAPTCHA login ─────────────────────────────────────────────
+def _gsccca_manual_login(driver, user: str, pw: str) -> bool:
+    """Open the login page in a visible browser, pre-fill credentials, then pause
+    so a human can solve the CAPTCHA and click Login. Returns True once the
+    resulting page shows an authenticated state."""
+    from selenium.webdriver.common.by import By
+    driver.get(GSCCCA_LOGIN_URL)
+    time.sleep(2)
+    try:
+        u = driver.find_elements(By.NAME, "txtUserID")
+        p = driver.find_elements(By.NAME, "txtPassword")
+        if u and user:
+            u[0].clear(); u[0].send_keys(user)
+        if p and pw:
+            p[0].clear(); p[0].send_keys(pw)
+    except Exception:
+        pass
+    print("\n" + "=" * 64)
+    print("  GSCCCA MANUAL LOGIN")
+    print("  A Chrome window is open on the GSCCCA login page with your")
+    print("  username/password pre-filled. Solve the CAPTCHA and click Login.")
+    print("=" * 64)
+    try:
+        input("  Solve the CAPTCHA in the browser, then press Enter here... ")
+    except EOFError:
+        print("  (no interactive stdin — cannot do manual login here)")
+        return False
+    time.sleep(1)
+    _ga_save_debug(driver, "02_after_manual_login")
+    low = driver.page_source.lower()
+    return ("log out" in low or "logout" in low or "my account" in low
+            or not driver.find_elements(By.NAME, "txtPassword"))
+
+
+def save_ga_session(headless: bool = False) -> bool:
+    """Open a visible browser, let Dana log in manually (solving the CAPTCHA),
+    and save the authenticated cookies to GA_SESSION_FILE for later reuse."""
+    user = os.getenv("GA_GSCCCA_USERNAME")
+    pw   = os.getenv("GA_GSCCCA_PASSWORD")
+    driver = _ga_get_driver(headless=False)  # must be visible for the CAPTCHA
+    try:
+        if _gsccca_manual_login(driver, user, pw):
+            _ga_save_cookies(driver)
+            return True
+        print("    GA/GSCCCA: manual login not confirmed — session not saved.")
+        return False
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+# ── Option B: cookie session reuse ─────────────────────────────────────────────
+def _ga_save_cookies(driver):
+    try:
+        GA_SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        cookies = driver.get_cookies()
+        GA_SESSION_FILE.write_text(json.dumps(cookies, indent=2))
+        print(f"    GA/GSCCCA: saved {len(cookies)} cookies -> "
+              f"data/data_engine/{GA_SESSION_FILE.name}")
+    except Exception as e:
+        print(f"    GA/GSCCCA: could not save session: {e}")
+
+
+def _ga_load_cookies(driver) -> bool:
+    if not GA_SESSION_FILE.exists():
+        print("    GA/GSCCCA: no saved session file (run --save-session first).")
+        return False
+    try:
+        cookies = json.loads(GA_SESSION_FILE.read_text())
+    except Exception:
+        print("    GA/GSCCCA: session file unreadable.")
+        return False
+    # Must be on a gsccca.org page before add_cookie; .gsccca.org cookies then
+    # apply across the apps/search subdomains.
+    driver.get("https://www.gsccca.org/")
+    time.sleep(2)
+    n = 0
+    for c in cookies:
+        c.pop("sameSite", None)
+        try:
+            driver.add_cookie(c)
+            n += 1
+        except Exception:
+            continue
+    print(f"    GA/GSCCCA: loaded {n}/{len(cookies)} saved cookies.")
+    return n > 0
+
+
+def _ga_session_valid(driver) -> bool:
+    """Confirm the loaded cookies still authenticate the lien search."""
+    from selenium.webdriver.common.by import By
+    driver.get(GSCCCA_SEARCH_URL)
+    time.sleep(2)
+    # The search form (txtInstrCode) should be present and we should not be
+    # bounced to a login form as the page's primary content.
+    has_form = bool(driver.find_elements(By.NAME, "txtInstrCode"))
+    title = (driver.title or "").lower()
+    return has_form and "login" not in title
 
 
 def _ga_get_driver(headless: bool = True):
@@ -523,10 +651,21 @@ def main():
     ap.add_argument("--limit", type=int, default=MAX_PER_COUNTY)
     ap.add_argument("--no-headless", action="store_true",
                     help="show the browser window")
+    ap.add_argument("--manual", action="store_true",
+                    help="visible browser; pause for Dana to solve the CAPTCHA, "
+                         "then automate the search (Option A)")
+    ap.add_argument("--save-session", action="store_true",
+                    help="log in manually once and save cookies for reuse (Option B)")
+    ap.add_argument("--use-session", action="store_true",
+                    help="reuse saved cookies and skip login (Option B)")
     ap.add_argument("--licenses", action="store_true",
                     help="run the GA SOS license scrape instead of liens")
     args = ap.parse_args()
 
+    if args.save_session:
+        ok = save_ga_session()
+        print(f"\nGA session {'saved' if ok else 'NOT saved'}.")
+        return
     if args.licenses:
         print(f"GA licenses: {collect_ga_licenses(args.limit)}")
         return
@@ -534,7 +673,8 @@ def main():
                 if args.counties else None)
     n = collect_ga_liens(limit=args.limit, counties=counties,
                          days_back=args.days, dry_run=args.dry_run,
-                         headless=not args.no_headless)
+                         headless=not args.no_headless, manual=args.manual,
+                         use_session=args.use_session)
     tag = "(dry-run) " if args.dry_run else ""
     print(f"\nGA liens {tag}result: {n}")
 

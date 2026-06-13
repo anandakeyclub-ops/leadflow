@@ -213,7 +213,13 @@ def collect_liens(state_code: str, county: Optional[str] = None) -> int:
         from scripts.scrapers.georgia_scraper import collect_ga_liens
         return collect_ga_liens()
     if s == "il":
+        # Prefer CourtListener (free federal docket API, no WAF) when a token is
+        # configured; otherwise fall back to the SOS UCC Selenium scraper.
+        if os.getenv("COURTLISTENER_TOKEN"):
+            from scripts.scrapers.illinois_scraper import collect_il_liens_courtlistener
+            return collect_il_liens_courtlistener()
         from scripts.scrapers.illinois_scraper import collect_il_liens
+        print("    IL: COURTLISTENER_TOKEN not set — using SOS UCC scraper fallback.")
         return collect_il_liens()
     if s in ("fl", "tx"):
         # FL (9 county portals) and TX (Harris) liens are produced by the
