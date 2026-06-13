@@ -94,6 +94,9 @@ from scripts.enrichment.multi_state_email_enrichment import (  # noqa: E402
 # ── Config ────────────────────────────────────────────────────────────────────
 CAMPAIGN_ID = os.getenv("CAMPAIGN_ID", "lien_outreach_2026")
 MATCH_THRESHOLD = 0.55          # score >= 55 (score_lien_vs_dbpr returns 0..1)
+# Per-state overrides — TX name formats diverge more (lien=business names,
+# TDLR=person names in "LAST, FIRST"), so it needs a looser gate.
+STATE_MATCH_THRESHOLD = {"tx": 0.45}
 MAX_PER_COUNTY = 500            # hard rule #5
 MIN_REQUEST_DELAY = 1.0         # hard rule #3
 PDL_API_KEY = os.getenv("PDL_API_KEY", "")
@@ -206,6 +209,12 @@ def collect_liens(state_code: str, county: Optional[str] = None) -> int:
         return collect_liens_ny_acris(county=county)
     if s == "az":
         return collect_liens_az_maricopa()
+    if s == "ga":
+        from scripts.scrapers.georgia_scraper import collect_ga_liens
+        return collect_ga_liens()
+    if s == "il":
+        from scripts.scrapers.illinois_scraper import collect_il_liens
+        return collect_il_liens()
     if s in ("fl", "tx"):
         # FL (9 county portals) and TX (Harris) liens are produced by the
         # existing, credentialed Selenium scrapers that already write to
@@ -481,10 +490,15 @@ def collect_licenses(state_code: str) -> int:
         return _copy_tx_licenses()
     if s == "az":
         return _copy_az_licenses()
+    if s == "ga":
+        from scripts.scrapers.georgia_scraper import collect_ga_licenses
+        return collect_ga_licenses()
+    if s == "il":
+        from scripts.scrapers.illinois_scraper import collect_il_licenses
+        return collect_il_licenses()
 
     print(f"    {s.upper()} license source not yet wired "
-          f"(GA SOS / CA CSLB / NY DOB / NC LBGC / IL IDFPR / OH / PA) "
-          f"— pending. (0 licenses)")
+          f"(CA CSLB / NY DOB / NC LBGC / OH / PA) — pending. (0 licenses)")
     return 0
 
 
@@ -618,21 +632,53 @@ def _copy_az_licenses() -> int:
 # STEP C — match_liens_to_licenses  (REUSES score_lien_vs_dbpr)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def match_liens_to_licenses(state_code: str) -> int:
+import re as _re
+
+# Strip business suffixes so they don't pad token-overlap scores.
+_BIZ_SUFFIX_RE = _re.compile(
+    r"\b(l\.?l\.?c|inc|incorporated|corp|corporation|co|company|ltd|limited|"
+    r"lp|llp|pllc|p\.?c|p\.?a|dba)\.?\b", _re.I)
+
+
+def normalize_match_name(name: str) -> str:
+    """
+    Normalize a name for fuzzy matching, consistently on both sides:
+      - invert "LAST, FIRST [MIDDLE]" -> "FIRST [MIDDLE] LAST"
+      - strip LLC/INC/CO/... business suffixes
+      - collapse whitespace
+    (Lowercasing + punctuation removal happen downstream in norm_text. Because
+    score_lien_vs_dbpr is token-set based, inversion is order-neutral but keeps
+    names readable; suffix stripping is what actually tightens the match.)
+    """
+    n = (name or "").strip()
+    if "," in n:
+        last, rest = n.split(",", 1)
+        n = f"{rest.strip()} {last.strip()}".strip()
+    n = _BIZ_SUFFIX_RE.sub(" ", n)
+    n = _re.sub(r"\s+", " ", n).strip()
+    return n
+
+
+def match_liens_to_licenses(state_code: str, threshold: float | None = None) -> int:
     """
     Match normalized_liens -> normalized_contacts for the same state using the
-    existing DBPR scorer. Threshold score >= 0.55 (stored as match_score 0-100).
+    existing DBPR scorer. Threshold defaults to MATCH_THRESHOLD (0.55) or the
+    per-state override in STATE_MATCH_THRESHOLD (TX = 0.45). Names are normalized
+    on both sides (LAST,FIRST inversion + suffix strip) before scoring.
     Updates has_lien_match, lien_id, lien_amount, lien_filed_date, lien_county,
     match_score, match_method. Returns count of contacts matched.
     """
     s = state_code.upper()
-    print(f"\n  [match_liens_to_licenses] {STATE_NAMES.get(s.lower(), s)}")
+    if threshold is None:
+        threshold = STATE_MATCH_THRESHOLD.get(s.lower(), MATCH_THRESHOLD)
+    print(f"\n  [match_liens_to_licenses] {STATE_NAMES.get(s.lower(), s)} "
+          f"(threshold {int(threshold * 100)})")
     conn = get_connection()
     conn.autocommit = False
     try:
         # Build dbpr-style rows from normalized_contacts (REUSE contract:
         # score_lien_vs_dbpr expects norm_biz / norm_owner / business_name /
-        # owner_name keys).
+        # owner_name keys). Names normalized on both sides for fair matching.
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, business_name, owner_name
@@ -640,12 +686,14 @@ def match_liens_to_licenses(state_code: str) -> int:
             """, (s,))
             contact_rows = []
             for cid, biz, owner in cur.fetchall():
+                nb = normalize_match_name(biz or "")
+                no = normalize_match_name(owner or "")
                 contact_rows.append({
                     "id": cid,
-                    "business_name": biz or "",
-                    "owner_name": owner or "",
-                    "norm_biz": norm_text(biz or ""),
-                    "norm_owner": norm_text(owner or ""),
+                    "business_name": nb,
+                    "owner_name": no,
+                    "norm_biz": norm_text(nb),
+                    "norm_owner": norm_text(no),
                 })
 
         if not contact_rows:
@@ -687,7 +735,7 @@ def match_liens_to_licenses(state_code: str) -> int:
         # best match per contact id
         best: dict[int, dict] = {}
         for lien_id, debtor, biz, amount, filed, county_name in liens:
-            lien_name = (debtor or biz or "").strip()
+            lien_name = normalize_match_name(debtor or biz or "")
             if len(lien_name) < 3:
                 continue
             lien_tokens = set(norm_text(lien_name).split())
@@ -707,7 +755,7 @@ def match_liens_to_licenses(state_code: str) -> int:
                     if score > best_score:
                         best_score = score
                         best_row = row
-            if best_row is None or best_score < MATCH_THRESHOLD:
+            if best_row is None or best_score < threshold:
                 continue
 
             cid = best_row["id"]
@@ -740,7 +788,7 @@ def match_liens_to_licenses(state_code: str) -> int:
                 matched += cur.rowcount
         conn.commit()
         print(f"    Matched {matched:,} contacts (threshold "
-              f"{int(MATCH_THRESHOLD * 100)})")
+              f"{int(threshold * 100)})")
         return matched
     except Exception as e:
         conn.rollback()
@@ -999,61 +1047,118 @@ def run_state_collection(state_code: str,
     return stats
 
 
+# Engine states shown (in order) even when not built yet.
+ENGINE_STATES = ["FL", "TX", "AZ", "NY", "GA", "IL", "CA", "NC", "OH", "PA"]
+
+
+def _state_label(st) -> str:
+    """NULL/empty state -> 'UNKNOWN' (so it never shows as '??')."""
+    return "UNKNOWN" if st in (None, "", "?") else st
+
+
 def show_collection_stats() -> None:
-    """Print a per-state summary across the engine."""
+    """Per-state engine summary: liens, licenses, matches, the unmatched gaps on
+    both sides, enriched emails, what's in the email pipeline, the pipeline lag,
+    and the last scrape date. Flags any UNKNOWN-state liens."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # Licenses (normalized_contacts) per state.
             cur.execute("""
-                SELECT state,
+                SELECT COALESCE(NULLIF(state,''),'UNKNOWN') AS st,
                        COUNT(*) AS contacts,
                        COUNT(*) FILTER (WHERE has_lien_match) AS matched,
-                       COUNT(*) FILTER (
-                           WHERE email IS NOT NULL AND email <> '') AS with_email
+                       COUNT(*) FILTER (WHERE email IS NOT NULL AND email <> '') AS with_email
                 FROM normalized_contacts
-                GROUP BY state
+                GROUP BY 1
             """)
             contacts = {r[0]: {"contacts": r[1], "matched": r[2],
                                "with_email": r[3]} for r in cur.fetchall()}
 
+            # Liens per state + last scrape (max created_at).
             cur.execute("""
-                SELECT COALESCE(state,'?'), COUNT(*)
-                FROM normalized_liens GROUP BY state
+                SELECT COALESCE(NULLIF(state,''),'UNKNOWN') AS st,
+                       COUNT(*), MAX(created_at)
+                FROM normalized_liens GROUP BY 1
             """)
             liens = {r[0]: r[1] for r in cur.fetchall()}
+            cur.execute("""
+                SELECT COALESCE(NULLIF(state,''),'UNKNOWN') AS st, MAX(created_at)
+                FROM normalized_liens GROUP BY 1
+            """)
+            last_run = {r[0]: (r[1].date().isoformat() if r[1] else "—")
+                        for r in cur.fetchall()}
 
-            # in pipeline = normalized_contacts emails present in lien_dbpr_contacts
+            # Matched liens per state (liens referenced by a contact) -> unmatched liens.
+            cur.execute("""
+                SELECT COALESCE(NULLIF(nl.state,''),'UNKNOWN') AS st,
+                       COUNT(*) AS matched_liens
+                FROM normalized_liens nl
+                WHERE nl.id IN (SELECT lien_id FROM normalized_contacts
+                                WHERE lien_id IS NOT NULL)
+                GROUP BY 1
+            """)
+            matched_liens = {r[0]: r[1] for r in cur.fetchall()}
+
+            # In pipeline = normalized_contacts emails present in lien_dbpr_contacts.
             cur.execute("""
                 SELECT nc.state, COUNT(DISTINCT LOWER(nc.email))
                 FROM normalized_contacts nc
-                JOIN lien_dbpr_contacts ldc
-                  ON LOWER(ldc.email) = LOWER(nc.email)
+                JOIN lien_dbpr_contacts ldc ON LOWER(ldc.email) = LOWER(nc.email)
                 WHERE nc.email IS NOT NULL AND nc.email <> ''
                 GROUP BY nc.state
             """)
-            in_pipe = {r[0]: r[1] for r in cur.fetchall()}
+            in_pipe = {_state_label(r[0]): r[1] for r in cur.fetchall()}
 
-        all_states = sorted(set(list(contacts) + list(liens)))
-        print(f"\n{'='*86}")
+            # Email pipeline lag = matched + email + email_step=0 not yet synced.
+            cur.execute("""
+                SELECT COALESCE(NULLIF(nc.state,''),'UNKNOWN') AS st, COUNT(*)
+                FROM normalized_contacts nc
+                WHERE nc.has_lien_match AND nc.email IS NOT NULL AND nc.email <> ''
+                  AND nc.email_step = 0
+                  AND NOT EXISTS (SELECT 1 FROM lien_dbpr_contacts ldc
+                                  WHERE LOWER(ldc.email) = LOWER(nc.email))
+                GROUP BY 1
+            """)
+            lag = {r[0]: r[1] for r in cur.fetchall()}
+
+        # Order: known engine states first, then any extras (e.g. UNKNOWN).
+        extras = [s for s in (set(contacts) | set(liens)) if s not in ENGINE_STATES]
+        all_states = ENGINE_STATES + sorted(extras)
+
+        print(f"\n{'='*108}")
         print(f"  DATA ENGINE — COLLECTION STATS  ({date.today().isoformat()})")
-        print(f"{'='*86}")
-        print(f"  {'State':<6}{'Liens':>9}{'Licenses':>10}{'Matched':>9}"
-              f"{'Emails':>9}{'InPipe':>8}{'Match%':>9}{'Email%':>9}")
-        print(f"  {'-'*5:<6}{'-'*8:>9}{'-'*9:>10}{'-'*8:>9}"
-              f"{'-'*8:>9}{'-'*7:>8}{'-'*8:>9}{'-'*8:>9}")
+        print(f"{'='*108}")
+        hdr = (f"  {'State':<8}{'Liens':>9}{'Licenses':>10}{'Matched':>9}"
+               f"{'UnmtchL':>9}{'UnmtchLic':>10}{'Emails':>9}{'InPipe':>8}"
+               f"{'Lag':>7}  {'LastRun':<10}")
+        print(hdr)
+        print(f"  {'-'*104}")
+        total_addressable = 0
         for st in all_states:
-            label = "??" if st in (None, "?") else st
             cc = contacts.get(st, {})
+            ln = liens.get(st, 0)
             lic = cc.get("contacts", 0)
+            if ln == 0 and lic == 0:
+                print(f"  {st:<8}{'(not built)':>56}")
+                continue
             matched = cc.get("matched", 0)
             emails = cc.get("with_email", 0)
-            ln = liens.get(st, 0)
+            unm_liens = max(ln - matched_liens.get(st, 0), 0)
+            unm_lic = max(lic - matched, 0)
             pipe = in_pipe.get(st, 0)
-            match_pct = round(matched / lic * 100, 1) if lic else 0.0
-            email_pct = round(emails / matched * 100, 1) if matched else 0.0
-            print(f"  {label:<6}{ln:>9,}{lic:>10,}{matched:>9,}"
-                  f"{emails:>9,}{pipe:>8,}{match_pct:>8.1f}%{email_pct:>8.1f}%")
-        print(f"{'='*86}\n")
+            st_lag = lag.get(st, 0)
+            total_addressable += st_lag
+            print(f"  {st:<8}{ln:>9,}{lic:>10,}{matched:>9,}{unm_liens:>9,}"
+                  f"{unm_lic:>10,}{emails:>9,}{pipe:>8,}{st_lag:>7,}  "
+                  f"{last_run.get(st,'—'):<10}")
+        print(f"  {'-'*104}")
+        print(f"  Total addressable: {total_addressable:,} matched contacts "
+              f"with email not yet in pipeline")
+        if liens.get("UNKNOWN"):
+            print(f"  ⚠ {liens['UNKNOWN']:,} liens have UNKNOWN (NULL/empty) state "
+                  f"— backfill state from county/data_source.")
+        print(f"{'='*108}\n")
     finally:
         release_connection(conn)
 

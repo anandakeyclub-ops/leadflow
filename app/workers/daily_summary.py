@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import smtplib
 import ssl
@@ -42,7 +43,7 @@ from typing import Any
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.core.db import get_connection
+from app.core.db import get_connection, release_connection
 
 try:
     from app.analytics.ga4_metrics import get_daily_ga4_summary
@@ -94,11 +95,17 @@ def safe_query(fn, default):
         conn.commit()
         return result
     except Exception as e:
-        conn.rollback()
-        print(f"  ⚠ Query warning ({fn.__name__}): {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        name = getattr(fn, "__name__", "query")
+        print(f"  ⚠ Query warning ({name}): {e}")
         return default
     finally:
-        conn.close()
+        # Return the connection to the pool (NOT conn.close(), which leaks the
+        # pool slot and exhausts the pool after a handful of safe_query calls).
+        release_connection(conn)
 
 
 def _one(cur, sql: str, params: tuple = ()) -> int:
@@ -115,6 +122,45 @@ def _pct(n: float, d: float) -> float:
 
 def _money(v: float) -> str:
     return f"${float(v or 0):,.0f}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Query-cache + index helpers (keep the summary fast and crash-proof)
+# ─────────────────────────────────────────────────────────────────────────────
+
+CACHE_FILE = BASE_DIR / "daily_summary_cache.json"
+
+
+def _load_summary_cache() -> dict:
+    try:
+        if CACHE_FILE.exists():
+            return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_summary_cache(key: str, data) -> None:
+    cache = _load_summary_cache()
+    cache[key] = data
+    try:
+        CACHE_FILE.write_text(json.dumps(cache, indent=2, default=str),
+                              encoding="utf-8")
+    except Exception:
+        pass
+
+
+def ensure_email_indexes(cur) -> None:
+    """Idempotently ensure the indexes the breakdown queries rely on exist
+    (no-op where they already do)."""
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_sends_email
+            ON email_sends(to_email);
+        CREATE INDEX IF NOT EXISTS idx_email_sends_sent_at
+            ON email_sends(sent_at);
+        CREATE INDEX IF NOT EXISTS idx_email_sends_campaign
+            ON email_sends(campaign_id);
+    """)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,116 +329,165 @@ def _get_lead_intelligence(cur):
 
 
 def _get_state_breakdown(cur):
-    cur.execute("""
-        SELECT
-            COALESCE(c.state, 'Unknown') AS state,
-            COUNT(DISTINCT nl.id) AS liens,
-            COUNT(DISTINCT ldc.lien_id) AS matched_liens,
-            COUNT(DISTINCT ldc.email) FILTER (
-                WHERE ldc.email IS NOT NULL AND ldc.email != '' AND ldc.email NOT LIKE '%%@example.com'
-            ) AS email_ready,
-            COUNT(DISTINCT ldc.email) FILTER (
-                WHERE ldc.confidence='high'
-                  AND ldc.email IS NOT NULL AND ldc.email != '' AND ldc.email NOT LIKE '%%@example.com'
-            ) AS high_confidence,
-            COUNT(DISTINCT es1.to_email) FILTER (
-                WHERE es1.sequence_step=1 AND es1.status='sent'
-            ) AS email1_sent,
-            COUNT(DISTINCT es2.to_email) FILTER (
-                WHERE es2.sequence_step=2 AND es2.status='sent'
-            ) AS email2_sent,
-            COUNT(DISTINCT es3.to_email) FILTER (
-                WHERE es3.sequence_step=3 AND es3.status='sent'
-            ) AS email3_sent,
-            COUNT(DISTINCT esr.to_email) FILTER (
-                WHERE COALESCE(esr.reply_received, FALSE)=TRUE
-            ) AS replied
-        FROM counties c
-        LEFT JOIN normalized_liens nl ON nl.county_id = c.id
-        LEFT JOIN lien_dbpr_contacts ldc ON ldc.county_id = c.id
-        LEFT JOIN email_sends es1 ON LOWER(es1.to_email)=LOWER(ldc.email) AND es1.campaign_id=%s
-        LEFT JOIN email_sends es2 ON LOWER(es2.to_email)=LOWER(ldc.email) AND es2.campaign_id=%s
-        LEFT JOIN email_sends es3 ON LOWER(es3.to_email)=LOWER(ldc.email) AND es3.campaign_id=%s
-        LEFT JOIN email_sends esr ON LOWER(esr.to_email)=LOWER(ldc.email) AND esr.campaign_id=%s
-        GROUP BY COALESCE(c.state, 'Unknown')
-        HAVING COUNT(DISTINCT nl.id) > 0 OR COUNT(DISTINCT ldc.email) > 0
-        ORDER BY liens DESC, email_ready DESC
-    """, (CAMPAIGN_ID, CAMPAIGN_ID, CAMPAIGN_ID, CAMPAIGN_ID))
+    """Per-state lead funnel.
 
-    rows = []
-    for r in cur.fetchall():
-        rows.append({
-            "state": r[0],
-            "liens": r[1] or 0,
-            "matched_liens": r[2] or 0,
-            "email_ready": r[3] or 0,
-            "high_confidence": r[4] or 0,
-            "email1_sent": r[5] or 0,
-            "email2_sent": r[6] or 0,
-            "email3_sent": r[7] or 0,
-            "replied": r[8] or 0,
-            "match_rate": _pct(r[2] or 0, r[1] or 0),
-            "email_coverage_rate": _pct(r[3] or 0, r[1] or 0),
-        })
-    return rows
+    Rewritten for speed: the old query LEFT JOINed normalized_liens AND
+    lien_dbpr_contacts off counties (a per-county lien x contact cartesian) and
+    then self-joined email_sends four times on LOWER(to_email) — which timed out.
+    Now each metric is aggregated ONCE in its own CTE and joined on the small
+    per-state keys; the email join is on raw to_email (uses idx_email_sends_email,
+    emails are already stored lowercased on both sides). Caps at 10 states, runs
+    under a 30s statement timeout, and falls back to the last cached result if
+    cancelled."""
+    cached = _load_summary_cache().get("state_breakdown")
+    try:
+        cur.execute("SET LOCAL statement_timeout = '30s'")
+        cur.execute("""
+            WITH lien_counts AS (
+                SELECT COALESCE(c.state,'Unknown') AS state, COUNT(*) AS liens
+                FROM normalized_liens nl JOIN counties c ON nl.county_id = c.id
+                GROUP BY 1
+            ),
+            contact_counts AS (
+                SELECT COALESCE(c.state,'Unknown') AS state,
+                    COUNT(DISTINCT ldc.lien_id) AS matched_liens,
+                    COUNT(DISTINCT ldc.email) FILTER (
+                        WHERE ldc.email IS NOT NULL AND ldc.email <> ''
+                          AND ldc.email NOT LIKE '%%@example.com') AS email_ready,
+                    COUNT(DISTINCT ldc.email) FILTER (
+                        WHERE ldc.confidence='high' AND ldc.email IS NOT NULL
+                          AND ldc.email <> '' AND ldc.email NOT LIKE '%%@example.com') AS high_confidence
+                FROM lien_dbpr_contacts ldc JOIN counties c ON ldc.county_id = c.id
+                GROUP BY 1
+            ),
+            sent_counts AS (
+                SELECT COALESCE(c.state,'Unknown') AS state,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE es.sequence_step=1) AS email1_sent,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE es.sequence_step=2) AS email2_sent,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE es.sequence_step=3) AS email3_sent,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE COALESCE(es.reply_received,FALSE)=TRUE) AS replied
+                FROM email_sends es
+                JOIN lien_dbpr_contacts ldc ON ldc.email = es.to_email
+                JOIN counties c ON ldc.county_id = c.id
+                WHERE es.campaign_id = %s AND es.status='sent'
+                GROUP BY 1
+            ),
+            all_states AS (
+                SELECT state FROM lien_counts UNION SELECT state FROM contact_counts
+            )
+            SELECT a.state, COALESCE(l.liens,0), COALESCE(cc.matched_liens,0),
+                   COALESCE(cc.email_ready,0), COALESCE(cc.high_confidence,0),
+                   COALESCE(sc.email1_sent,0), COALESCE(sc.email2_sent,0),
+                   COALESCE(sc.email3_sent,0), COALESCE(sc.replied,0)
+            FROM all_states a
+            LEFT JOIN lien_counts l   ON l.state  = a.state
+            LEFT JOIN contact_counts cc ON cc.state = a.state
+            LEFT JOIN sent_counts sc  ON sc.state = a.state
+            WHERE COALESCE(l.liens,0) > 0 OR COALESCE(cc.email_ready,0) > 0
+            ORDER BY COALESCE(l.liens,0) DESC, COALESCE(cc.email_ready,0) DESC
+            LIMIT 10
+        """, (CAMPAIGN_ID,))
+        rows = []
+        for r in cur.fetchall():
+            rows.append({
+                "state": r[0],
+                "liens": r[1] or 0,
+                "matched_liens": r[2] or 0,
+                "email_ready": r[3] or 0,
+                "high_confidence": r[4] or 0,
+                "email1_sent": r[5] or 0,
+                "email2_sent": r[6] or 0,
+                "email3_sent": r[7] or 0,
+                "replied": r[8] or 0,
+                "match_rate": _pct(r[2] or 0, r[1] or 0),
+                "email_coverage_rate": _pct(r[3] or 0, r[1] or 0),
+            })
+        _save_summary_cache("state_breakdown", rows)
+        return rows
+    except Exception as e:
+        print(f"  ⚠ state breakdown slow/failed ({e}); using cached results")
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        return cached or []
 
 
 def _get_county_breakdown(cur):
-    cur.execute("""
-        SELECT
-            c.state,
-            c.county_name,
-            COUNT(DISTINCT nl.id) AS liens,
-            COUNT(DISTINCT ldc.lien_id) AS matched_liens,
-            COUNT(DISTINCT ldc.email) FILTER (
-                WHERE ldc.email IS NOT NULL AND ldc.email != '' AND ldc.email NOT LIKE '%%@example.com'
-            ) AS email_ready,
-            COUNT(DISTINCT ldc.email) FILTER (
-                WHERE ldc.confidence='high'
-                  AND ldc.email IS NOT NULL AND ldc.email != '' AND ldc.email NOT LIKE '%%@example.com'
-            ) AS high_confidence,
-            COUNT(DISTINCT es1.to_email) FILTER (
-                WHERE es1.sequence_step=1 AND es1.status='sent'
-            ) AS email1_sent,
-            COUNT(DISTINCT es2.to_email) FILTER (
-                WHERE es2.sequence_step=2 AND es2.status='sent'
-            ) AS email2_sent,
-            COUNT(DISTINCT es3.to_email) FILTER (
-                WHERE es3.sequence_step=3 AND es3.status='sent'
-            ) AS email3_sent,
-            COUNT(DISTINCT esr.to_email) FILTER (
-                WHERE COALESCE(esr.reply_received, FALSE)=TRUE
-            ) AS replied
-        FROM counties c
-        LEFT JOIN normalized_liens nl ON nl.county_id = c.id
-        LEFT JOIN lien_dbpr_contacts ldc ON ldc.county_id = c.id
-        LEFT JOIN email_sends es1 ON LOWER(es1.to_email)=LOWER(ldc.email) AND es1.campaign_id=%s
-        LEFT JOIN email_sends es2 ON LOWER(es2.to_email)=LOWER(ldc.email) AND es2.campaign_id=%s
-        LEFT JOIN email_sends es3 ON LOWER(es3.to_email)=LOWER(ldc.email) AND es3.campaign_id=%s
-        LEFT JOIN email_sends esr ON LOWER(esr.to_email)=LOWER(ldc.email) AND esr.campaign_id=%s
-        GROUP BY c.state, c.county_name
-        HAVING COUNT(DISTINCT nl.id) > 0 OR COUNT(DISTINCT ldc.email) > 0
-        ORDER BY liens DESC, email_ready DESC
-        LIMIT 35
-    """, (CAMPAIGN_ID, CAMPAIGN_ID, CAMPAIGN_ID, CAMPAIGN_ID))
-
-    rows = []
-    for r in cur.fetchall():
-        rows.append({
-            "state": r[0] or "",
-            "county_name": r[1] or "",
-            "liens": r[2] or 0,
-            "matched_liens": r[3] or 0,
-            "email_ready": r[4] or 0,
-            "high_confidence": r[5] or 0,
-            "email1_sent": r[6] or 0,
-            "email2_sent": r[7] or 0,
-            "email3_sent": r[8] or 0,
-            "replied": r[9] or 0,
-            "match_rate": _pct(r[3] or 0, r[2] or 0),
-            "email_coverage_rate": _pct(r[4] or 0, r[2] or 0),
-        })
-    return rows
+    """Per-county lead funnel — same cartesian/self-join fix as the state
+    breakdown, aggregated per county id, 30s timeout + cache fallback, top 35."""
+    cached = _load_summary_cache().get("county_breakdown")
+    try:
+        cur.execute("SET LOCAL statement_timeout = '30s'")
+        cur.execute("""
+            WITH lc AS (
+                SELECT c.id AS cid, COUNT(*) AS liens
+                FROM normalized_liens nl JOIN counties c ON nl.county_id = c.id
+                GROUP BY c.id
+            ),
+            cc AS (
+                SELECT c.id AS cid,
+                    COUNT(DISTINCT ldc.lien_id) AS matched_liens,
+                    COUNT(DISTINCT ldc.email) FILTER (
+                        WHERE ldc.email IS NOT NULL AND ldc.email <> ''
+                          AND ldc.email NOT LIKE '%%@example.com') AS email_ready,
+                    COUNT(DISTINCT ldc.email) FILTER (
+                        WHERE ldc.confidence='high' AND ldc.email IS NOT NULL
+                          AND ldc.email <> '' AND ldc.email NOT LIKE '%%@example.com') AS high_confidence
+                FROM lien_dbpr_contacts ldc JOIN counties c ON ldc.county_id = c.id
+                GROUP BY c.id
+            ),
+            sc AS (
+                SELECT c.id AS cid,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE es.sequence_step=1) AS email1_sent,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE es.sequence_step=2) AS email2_sent,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE es.sequence_step=3) AS email3_sent,
+                    COUNT(DISTINCT es.to_email) FILTER (WHERE COALESCE(es.reply_received,FALSE)=TRUE) AS replied
+                FROM email_sends es
+                JOIN lien_dbpr_contacts ldc ON ldc.email = es.to_email
+                JOIN counties c ON ldc.county_id = c.id
+                WHERE es.campaign_id = %s AND es.status='sent'
+                GROUP BY c.id
+            ),
+            ids AS (SELECT cid FROM lc UNION SELECT cid FROM cc)
+            SELECT co.state, co.county_name, COALESCE(lc.liens,0),
+                   COALESCE(cc.matched_liens,0), COALESCE(cc.email_ready,0),
+                   COALESCE(cc.high_confidence,0), COALESCE(sc.email1_sent,0),
+                   COALESCE(sc.email2_sent,0), COALESCE(sc.email3_sent,0),
+                   COALESCE(sc.replied,0)
+            FROM ids i JOIN counties co ON co.id = i.cid
+            LEFT JOIN lc ON lc.cid = i.cid
+            LEFT JOIN cc ON cc.cid = i.cid
+            LEFT JOIN sc ON sc.cid = i.cid
+            WHERE COALESCE(lc.liens,0) > 0 OR COALESCE(cc.email_ready,0) > 0
+            ORDER BY COALESCE(lc.liens,0) DESC, COALESCE(cc.email_ready,0) DESC
+            LIMIT 35
+        """, (CAMPAIGN_ID,))
+        rows = []
+        for r in cur.fetchall():
+            rows.append({
+                "state": r[0] or "",
+                "county_name": r[1] or "",
+                "liens": r[2] or 0,
+                "matched_liens": r[3] or 0,
+                "email_ready": r[4] or 0,
+                "high_confidence": r[5] or 0,
+                "email1_sent": r[6] or 0,
+                "email2_sent": r[7] or 0,
+                "email3_sent": r[8] or 0,
+                "replied": r[9] or 0,
+                "match_rate": _pct(r[3] or 0, r[2] or 0),
+                "email_coverage_rate": _pct(r[4] or 0, r[2] or 0),
+            })
+        _save_summary_cache("county_breakdown", rows)
+        return rows
+    except Exception as e:
+        print(f"  ⚠ county breakdown slow/failed ({e}); using cached results")
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        return cached or []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1115,6 +1210,9 @@ def main():
     print(f"\n[TaxCase Review Optimization Intelligence v4.2] {today}")
     print(f"  Sending from : {SUMMARY_SENDER}")
     print(f"  Campaign     : {CAMPAIGN_ID}")
+
+    # Ensure the indexes the breakdown queries rely on exist (idempotent no-op).
+    safe_query(lambda cur: ensure_email_indexes(cur), None)
 
     lead = safe_query(_get_lead_intelligence, {
         "liens_total": 0, "liens_24h": 0, "liens_7d": 0, "liens_30d": 0,
