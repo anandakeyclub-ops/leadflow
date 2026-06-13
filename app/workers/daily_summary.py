@@ -850,6 +850,72 @@ def build_lead_database_section(lead: dict, states: list[dict], counties: list[d
     )
 
 
+def build_data_collection_section(cur) -> str:
+    """Per-state data-engine summary: liens, licenses, matches, emails, pipeline.
+
+    Reads the data engine's normalized_contacts staging table. Safe if the
+    table does not exist yet (caller wraps this in safe_query)."""
+    cur.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'normalized_contacts'
+        )
+    """)
+    if not cur.fetchone()[0]:
+        return sec("🛰️ Data Engine — Multi-State Collection",
+                   "<p style='color:#94a3b8;font-size:13px'>normalized_contacts "
+                   "not built yet — run scripts/data_engine/run_daily.py.</p>")
+
+    cur.execute("""
+        SELECT state,
+               COUNT(*) AS licenses,
+               COUNT(*) FILTER (WHERE has_lien_match) AS matched,
+               COUNT(*) FILTER (WHERE email IS NOT NULL AND email <> '') AS emails
+        FROM normalized_contacts
+        GROUP BY state
+    """)
+    contacts = {r[0]: {"licenses": r[1], "matched": r[2], "emails": r[3]}
+                for r in cur.fetchall()}
+
+    cur.execute("SELECT COALESCE(state,'?'), COUNT(*) FROM normalized_liens GROUP BY state")
+    liens = {r[0]: r[1] for r in cur.fetchall()}
+
+    cur.execute("""
+        SELECT nc.state, COUNT(DISTINCT LOWER(nc.email))
+        FROM normalized_contacts nc
+        JOIN lien_dbpr_contacts ldc ON LOWER(ldc.email) = LOWER(nc.email)
+        WHERE nc.email IS NOT NULL AND nc.email <> ''
+        GROUP BY nc.state
+    """)
+    in_pipe = {r[0]: r[1] for r in cur.fetchall()}
+
+    states = sorted(s for s in set(list(contacts) + list(liens)) if s)
+    rows = []
+    for st in states:
+        c = contacts.get(st, {})
+        lic = c.get("licenses", 0)
+        matched = c.get("matched", 0)
+        emails = c.get("emails", 0)
+        match_pct = _pct(matched, lic)
+        rows.append([
+            h(st),
+            f"{liens.get(st, 0):,}",
+            f"{lic:,}",
+            f"{matched:,}",
+            f"{emails:,}",
+            f"{in_pipe.get(st, 0):,}",
+            f"{match_pct}%",
+        ])
+    if not rows:
+        rows = [["—", "0", "0", "0", "0", "0", "0%"]]
+
+    return sec("🛰️ Data Engine — Multi-State Collection", simple_table(
+        ["State", "Liens", "Licenses", "Matched", "Emails", "In pipeline", "Match%"],
+        rows
+    ), "Centralized engine: liens scraped, license universe, lien↔license matches, "
+       "enriched emails, and rows synced into the email pipeline.")
+
+
 def build_traffic_section(ga4: dict, clarity: dict, ux: dict) -> str:
     questionnaire_start = ga4.get("questionnaire_start", 0)
     users = ga4.get("users", 0)
@@ -978,7 +1044,7 @@ def build_booking_section(bk: dict) -> str:
   {"<h3 style='font-size:13px;margin:16px 0 8px 0'>💰 Recent Paid Bookings (7 days)</h3>" + recent_table if recent_table else ""}
 </div>"""
 
-def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, conv: dict, ga4: dict, clarity: dict, ux: dict, today: str):
+def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, conv: dict, ga4: dict, clarity: dict, ux: dict, today: str, bk: dict | None = None, data_section: str = ""):
     subject = f"📊 TaxCase Review Optimization Intelligence — {today}"
 
     html = f"""<!DOCTYPE html>
@@ -1004,6 +1070,7 @@ def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, 
     {build_traffic_section(ga4, clarity, ux)}
     {build_booking_section(bk or {})}
     {build_email_sequence_section(seq)}
+    {data_section}
     {build_lead_database_section(lead, states, counties)}
 
     <p style="margin-top:28px;color:#64748b;font-size:12px;border-top:1px solid #e2e8f0;padding-top:14px">
@@ -1081,7 +1148,9 @@ def main():
     clarity = _fetch_clarity()
     ux = _fetch_ux(clarity)
 
-    subject, html = build_html(lead, states, counties, seq, conv, ga4, clarity, ux, today)
+    data_section = safe_query(build_data_collection_section, "")
+
+    subject, html = build_html(lead, states, counties, seq, conv, ga4, clarity, ux, today, bk, data_section)
 
     if args.dry_run:
         print("\n" + subject)
