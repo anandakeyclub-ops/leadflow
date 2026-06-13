@@ -225,9 +225,16 @@ def collect_liens(state_code: str, county: Optional[str] = None) -> int:
 
 
 # ── NYC ACRIS (Socrata open data) ─────────────────────────────────────────────
-ACRIS_MASTER   = "https://data.cityofnewyork.us/resource/8h5j-fqxa.json"
-ACRIS_PARTIES  = "https://data.cityofnewyork.us/resource/636b-3b5g.json"
-ACRIS_DOCCODES = "https://data.cityofnewyork.us/resource/7isb-wh4c.json"
+# Federal tax liens are PERSONAL PROPERTY records in ACRIS (class "UCC AND
+# FEDERAL LIENS"; party1=DEBTOR, party2=SECURED PARTY/IRS) — NOT real property.
+# Verified live: Personal Property Master sv7x-dduq has doc_type 'FTL' (Federal
+# Tax Lien) and fedtax_* fields; Personal Property Parties is nbbg-wtuz.
+# (The spec's 8h5j-fqxa is the Real Property Legals dataset and has no doc_type.)
+ACRIS_MASTER   = "https://data.cityofnewyork.us/resource/sv7x-dduq.json"
+ACRIS_PARTIES  = "https://data.cityofnewyork.us/resource/nbbg-wtuz.json"
+# Verified federal-tax-lien doc_type code in the PP master. Releases/withdrawals
+# (RFTL, DPFTL, NAFTL, ...) are intentionally excluded — we want active liens.
+ACRIS_FTL_CODES = ["FTL"]
 # Optional Socrata app token raises the anonymous rate limit. Either name works.
 NYC_APP_TOKEN  = os.getenv("NYC_APP_TOKEN") or os.getenv("SOCRATA_APP_TOKEN") or ""
 ACRIS_BOROUGH  = {"1": "New York", "2": "Bronx", "3": "Kings",
@@ -263,54 +270,30 @@ def _acris_is_gov(name: str) -> bool:
 def _acris_pick_debtor(parties: list) -> dict:
     """
     From a document's ACRIS parties pick the taxpayer/debtor: the non-government
-    party. ACRIS party_type '2' is the party the instrument is filed against
-    (the debtor on a lien), so prefer '2', then '1'. Returns the party dict
-    (with name/address/city/state/zip) or {} if none usable.
+    party. On ACRIS Personal Property federal tax liens party_type '1' is the
+    DEBTOR and '2' is the SECURED PARTY (the IRS), so prefer '1', then '2'. The
+    IRS party is also dropped by the government-name filter. Returns the party
+    dict (name/address/city/state/zip) or {} if none usable.
     """
     named = [p for p in parties if (p.get("name") or "").strip()]
     nongov = [p for p in named if not _acris_is_gov(p.get("name", ""))]
     pool = nongov or named
     if not pool:
         return {}
-    pool.sort(key=lambda p: (str(p.get("party_type")) != "2",
-                             str(p.get("party_type")) != "1"))
+    pool.sort(key=lambda p: (str(p.get("party_type")) != "1",
+                             str(p.get("party_type")) != "2"))
     return pool[0]
 
 
 def _resolve_acris_doc_types() -> list:
     """
-    Determine the ACRIS doc_type code(s) for federal tax liens. Self-correcting:
-      1. NY_ACRIS_DOC_TYPES env override (comma list), else
-      2. cached codes from a prior discovery, else
-      3. discover from the ACRIS Document Control Codes dataset by matching
-         descriptions containing 'FEDERAL TAX LIEN', else
-      4. documented fallbacks ['FTLIEN', 'FTL'].
+    ACRIS doc_type code(s) for federal tax liens. NY_ACRIS_DOC_TYPES env var
+    (comma list) overrides; otherwise the verified default ACRIS_FTL_CODES.
     """
     env = os.getenv("NY_ACRIS_DOC_TYPES", "").strip()
     if env:
         return [c.strip() for c in env.split(",") if c.strip()]
-
-    cached = _load_checkpoints().get("ny_acris_doc_codes")
-    if cached:
-        return cached
-
-    codes = []
-    r = http_get(ACRIS_DOCCODES, params={"$limit": 2000},
-                 headers=_socrata_headers())
-    if r is not None and r.status_code == 200:
-        try:
-            for row in r.json():
-                desc = (row.get("doc_type_description")
-                        or row.get("description") or "").upper()
-                code = (row.get("doc_type") or row.get("doc__type") or "").strip()
-                if code and "FEDERAL TAX LIEN" in desc:
-                    codes.append(code)
-        except ValueError:
-            pass
-    if not codes:
-        codes = ["FTLIEN", "FTL"]
-    _save_checkpoint("ny_acris_doc_codes", codes)
-    return codes
+    return list(ACRIS_FTL_CODES)
 
 
 def _acris_fetch_parties(doc_ids: list, headers: dict, chunk: int = 75) -> dict:
@@ -405,8 +388,8 @@ def collect_liens_ny_acris(county: Optional[str] = None,
                 amount = float(amount) if amount not in (None, "") else None
             except (TypeError, ValueError):
                 amount = None
-            filed = (m.get("document_date") or m.get("recorded_datetime")
-                     or "")[:10] or None
+            filed = (m.get("fedtax_assessment_date")
+                     or m.get("recorded_datetime") or "")[:10] or None
 
             h = hashlib.md5(f"acris|{doc_id}".encode()).hexdigest()
             with conn.cursor() as cur:

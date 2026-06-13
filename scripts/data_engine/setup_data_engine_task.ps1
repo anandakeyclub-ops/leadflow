@@ -25,15 +25,37 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartCount 1 `
     -RestartInterval (New-TimeSpan -Minutes 30)
 
-Register-ScheduledTask `
-    -TaskName "LeadFlow - Data Engine" `
-    -Action   $action `
-    -Trigger  $trigger `
-    -Settings $settings `
-    -RunLevel Highest `
-    -Force | Out-Null
-
-Write-Host "  OK  LeadFlow - Data Engine: Daily at 6:30 AM" -ForegroundColor Green
+# Prefer -RunLevel Highest (matches the other LeadFlow tasks) but that requires
+# an elevated session. Fall back to a normal per-user task so this also works
+# without admin. Report honestly on failure.
+$registered = $false
+try {
+    Register-ScheduledTask `
+        -TaskName "LeadFlow - Data Engine" `
+        -Action   $action `
+        -Trigger  $trigger `
+        -Settings $settings `
+        -RunLevel Highest `
+        -Force -ErrorAction Stop | Out-Null
+    $registered = $true
+    Write-Host "  OK  LeadFlow - Data Engine: Daily 6:30 AM (RunLevel Highest)" -ForegroundColor Green
+} catch {
+    Write-Host "  ! Elevated registration denied; retrying as a normal per-user task..." -ForegroundColor Yellow
+    try {
+        Register-ScheduledTask `
+            -TaskName "LeadFlow - Data Engine" `
+            -Action   $action `
+            -Trigger  $trigger `
+            -Settings $settings `
+            -Force -ErrorAction Stop | Out-Null
+        $registered = $true
+        Write-Host "  OK  LeadFlow - Data Engine: Daily 6:30 AM (per-user)" -ForegroundColor Green
+    } catch {
+        Write-Host "  X  Could not register task: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "     Re-run this script from an elevated PowerShell." -ForegroundColor Red
+    }
+}
+if (-not $registered) { exit 1 }
 Write-Host "      Command : $python scripts\data_engine\run_daily.py"
 Write-Host "      Start in: $workdir`n"
 Write-Host "  Verify with:" -ForegroundColor Cyan
