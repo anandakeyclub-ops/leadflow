@@ -24,8 +24,11 @@ load_dotenv()
 log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SUPABASE_URL  = os.getenv("SUPABASE_URL", "https://mpxgxfqdbquzkrvvejkh.supabase.co")
-SUPABASE_ANON = os.getenv("SUPABASE_ANON_KEY", "")
+# .strip()/.rstrip("/") guard against trailing newlines or whitespace that env
+# dashboards (e.g. Render) commonly append when pasting — an unstripped key has
+# a "\n" that requests rejects as an invalid header value.
+SUPABASE_URL  = os.getenv("SUPABASE_URL", "https://mpxgxfqdbquzkrvvejkh.supabase.co").strip().rstrip("/")
+SUPABASE_ANON = os.getenv("SUPABASE_ANON_KEY", "").strip()
 
 RPC_URL = f"{SUPABASE_URL}/rest/v1/rpc"
 
