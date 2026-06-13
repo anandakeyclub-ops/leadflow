@@ -1,0 +1,59 @@
+Update my sitemap.xml to include these new pages:
+
+/florida
+/florida/miami-dade/irs-tax-lien-help
+/florida/broward/irs-tax-lien-help
+/florida/palm-beach/irs-tax-lien-help
+/florida/hillsborough/irs-tax-lien-help
+/florida/pinellas/irs-tax-lien-help
+/florida/orange/irs-tax-lien-help
+/florida/duval/irs-tax-lien-help
+/florida/lee/irs-tax-lien-help
+/florida/polk/irs-tax-lien-help
+/florida/sarasota/irs-tax-lien-help
+/florida/manatee/irs-tax-lien-help
+/florida/martin/irs-tax-lien-help
+/florida/lake/irs-tax-lien-help
+/florida/pasco/irs-tax-lien-help
+/florida/osceola/irs-tax-lien-help
+/florida/seminole/irs-tax-lien-help
+/florida/collier/irs-tax-lien-help
+/florida/brevard/irs-tax-lien-help
+/florida/volusia/irs-tax-lien-help
+/florida/st-johns/irs-tax-lien-help
+/florida/alachua/irs-tax-lien-help
+/irs-notices/cp14-notice
+/irs-notices/cp503-notice
+/irs-notices/cp504-notice
+
+Set priority 0.8 for county pages and 0.9 for IRS notice pages.
+Set changefreq to monthly.
+Keep all existing pages.
+
+Pages to manually request indexing for right now (highest priority):
+
+https://taxcasereview.org/florida/miami-dade/irs-tax-lien-help
+https://taxcasereview.org/florida/broward/irs-tax-lien-help
+https://taxcasereview.org/florida/palm-beach/irs-tax-lien-help
+https://taxcasereview.org/florida/hillsborough/irs-tax-lien-help
+https://taxcasereview.org/florida/orange/irs-tax-lien-help
+https://taxcasereview.org/florida/duval/irs-tax-lien-help
+https://taxcasereview.org/florida/lee/irs-tax-lien-help
+https://taxcasereview.org/florida/sarasota/irs-tax-lien-help
+https://taxcasereview.org/florida/manatee/irs-tax-lien-help
+https://taxcasereview.org/florida/martin/irs-tax-lien-help
+https://taxcasereview.org/florida/lake/irs-tax-lien-help
+https://taxcasereview.org/florida/pasco/irs-tax-lien-help
+https://taxcasereview.org/florida/osceola/irs-tax-lien-help
+https://taxcasereview.org/florida/pinellas/irs-tax-lien-help
+https://taxcasereview.org/florida/polk/irs-tax-lien-help
+https://taxcasereview.org/florida/seminole/irs-tax-lien-help
+https://taxcasereview.org/florida/collier/irs-tax-lien-help
+https://taxcasereview.org/florida/brevard/irs-tax-lien-help
+https://taxcasereview.org/florida/volusia/irs-tax-lien-help
+https://taxcasereview.org/florida/st-johns/irs-tax-lien-help
+https://taxcasereview.org/florida/alachua/irs-tax-lien-help
+https://taxcasereview.org/florida
+https://taxcasereview.org/irs-notices/cp14-notice
+https://taxcasereview.org/irs-notices/cp503-notice
+https://taxcasereview.org/irs-notices/cp504-notice

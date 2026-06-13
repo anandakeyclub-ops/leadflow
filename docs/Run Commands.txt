@@ -1,0 +1,56 @@
+From the leadflow project root:
+
+1) Initialize database
+python scripts/init_db.py
+
+2) Smoke test
+python scripts/smoke_test.py
+
+3) Ingest sample Palm Beach data
+python -m app.workers.ingest_sample_data
+
+4) Run the Palm Beach pipeline
+python -m app.workers.run_palm_beach_pipeline
+
+5) Process manual replies later (optional)
+python -m app.workers.process_replies
+
+C:\Users\Dana\AppData\Local\Microsoft\WindowsApps\python.exe
+
+
+# Liens
+python -m app.workers.scrape_polk_liens --days-back 180 --visible   
+python -m app.workers.scrape_manatee_liens  --days-back 180 --visible
+python -m app.workers.scrape_pinellas_liens --days-back 180 --visible
+python -m app.workers.scrape_pasco_liens    --days-back 180 --visible
+python -m app.workers.scrape_osceola_liens  --days-back 180 --visible
+python -m app.workers.scrape_lake_liens     --days-back 180 --visible  
+python -m app.workers.scrape_hillsborough_liens --days-back 180 --include-state  
+python -m app.workers.scrape_sarasota_liens     --days-back 180 --visible
+python -m app.workers.scrape_miami_dade_liens --days-back 180 --no-headless      
+python -m app.workers.scrape_martin_liens   --days-back 180 --visible  
+python -m app.workers.scrape_palm_beach_liens --days-back 180 --visible 
+
+python -m app.workers.scrape_duval_liens --days-back 180 --visible          PDF  
+  
+python -m app.workers.scrape_volusia_liens  --days-back 180 --visible       Session Expire Error
+python -m app.workers.scrape_lee_liens     --days-back 180 --visible        Error/Blocking
+python -m app.workers.scrape_stjohns_liens  --days-back 180 --visible       Error/Blocking
+python -m app.workers.scrape_orange_liens  --days-back 180 --visible
+python -m app.workers.scrape_seminole_liens  --days-back 180 --visible
+python -m app.workers.scrape_collier_liens  --days-back 180 --visible
+  
+cd C:\Users\Dana\Desktop\leadflow
+python -m app.workers.inventory
+python -m app.workers.enrich_liens_from_dbpr --force --export
+python -m app.workers.enrich_liens_from_sunbiz
+python -m app.workers.enrich_liens_contacts 
+python -m app.workers.enrich_liens_skiptrace 
+python -m app.workers.enrich_liens_pdl --limit 100
+python export_contacts.py
+
+
+cd C:\Users\Dana\Desktop\v0-tax-landing
+git add -A
+git commit -m "describe what changed"
+git push origin main

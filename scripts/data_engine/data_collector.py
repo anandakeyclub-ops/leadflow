@@ -438,8 +438,15 @@ def collect_liens_az_maricopa() -> int:
     """Reuse the existing Maricopa HTTP scraper (writes to normalized_liens)."""
     try:
         import importlib.util
+        # maricopa_lien_scraper.py lives in scripts/archive/ (moved out of root
+        # during the cleanup). Fall back to the old root location if present.
+        candidates = [
+            LEADFLOW_DIR / "scripts" / "archive" / "maricopa_lien_scraper.py",
+            LEADFLOW_DIR / "maricopa_lien_scraper.py",
+        ]
+        path = next((p for p in candidates if p.exists()), candidates[0])
         spec = importlib.util.spec_from_file_location(
-            "maricopa_lien_scraper", str(LEADFLOW_DIR / "maricopa_lien_scraper.py"))
+            "maricopa_lien_scraper", str(path))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
     except Exception as e:

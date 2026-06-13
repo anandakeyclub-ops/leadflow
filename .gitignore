@@ -9,3 +9,21 @@ downloads/
 *.png
 *.html
 logs/
+
+# Diagnostic and one-off scripts (use scripts/ subdirs instead).
+# Anchored to the repo ROOT (leading /) so the organized copies under
+# scripts/maintenance, scripts/diagnostics, scripts/archive stay tracked.
+/check_*.py
+/debug_*.py
+/probe_*.py
+/test_*.py
+/diag_*.py
+/fix_*.py
+!/fix_connections.py
+*.bak
+*.before_*
+/PASTE_THE_FULL_PATH_HERE.txt
+/app.zip
+/scripts.zip
+# Large local DB dump — archived on disk, never committed (exceeds GitHub's limit)
+leadflow_backup.sql

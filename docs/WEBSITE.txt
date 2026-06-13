@@ -1,0 +1,77 @@
+
+Section 2 — Our Team (Professional Bios)
+Create placeholder bio cards for 2-3 team members with this structure:
+
+Professional headshot placeholder (use initials avatar in navy circle)
+Name
+Title (e.g. "Enrolled Agent | Former IRS Revenue Officer")
+Credentials (EA license #, years of experience)
+Brief 3-sentence bio focused on IRS experience
+
+Example bio card structure:
+[Avatar: D.R.]
+Dana Richards, EA
+Enrolled Agent | Former IRS Revenue Officer — 12 Years
+EA License: #00000000 | PTIN: P00000000
+"After 12 years as an IRS Revenue Officer in Florida and Texas, I saw firsthand how
+taxpayers were overwhelmed and underserved. I founded TaxCase Review to change that.
+We give you the same inside knowledge the IRS has — so you can make informed decisions."
+Note to Dana: Replace placeholder credentials with real license numbers before publishing.
+Section 3 — Credentials & Associations
+Display logo/badge grid:
+
+IRS Enrolled Agent (EA) designation badge
+National Association of Enrolled Agents (NAEA) member
+American Society of Tax Problem Solvers (ASTPS)
+PTIN registered preparers
+256-bit SSL encryption (Sectigo/DigiCert badge)
+
+Section 4 — By The Numbers
+
+17,800+ liens analyzed
+10 states served
+$399 flat fee — no hidden costs
+94% of clients found at least one viable resolution path
+24-48 hour review turnaround
+
+Section 5 — Our Process Philosophy
+Short paragraph: "We don't sell. We assess. Our $399 case review is designed to give
+you a complete picture of your options — including options you can pursue on your own.
+If professional representation makes sense for your situation, we'll tell you. If it
+doesn't, we'll tell you that too."
+Section 6 — CTA
+"Ready to understand your options?"
+Button: "Start Free Assessment — 60 Seconds" → /quiz
+Schema for /about:
+json{
+  "@context": "https://schema.org",
+  "@type": "AboutPage",
+  "name": "About TaxCase Review",
+  "url": "https://taxcasereview.org/about",
+  "description": "TaxCase Review was founded by former IRS officers...",
+  "mainEntity": {
+    "@type": "Organization",
+    "name": "TaxCase Review",
+    "url": "https://taxcasereview.org",
+    "telephone": "+15612470678",
+    "email": "info@taxcasereview.org",
+    "foundingDate": "2024",
+    "areaServed": ["FL","TX","CA","NY","GA","AZ","NC","IL","OH","PA"],
+    "serviceType": "Tax Resolution Consultation"
+  }
+}
+
+4E — Add "Who We Are" trust strip to homepage
+Between the hero and the "How It Works" section, add a narrow trust strip:
+[Photo] Dana R., EA         [Photo] [Second EA]         [Photo] [Third EA]
+Former IRS Revenue Officer  Enrolled Agent, 8 yrs       Tax Resolution Specialist
+12 years IRS experience     Licensed in FL, TX, CA      NAEA Member
+Link strip to /about
+
+PART 7: ADD AUTHOR BYLINES TO BLOG POSTS
+Every blog post currently shows no author. Add to each blog post:
+Author bio block below post title:
+Written by [Author Name], EA
+Enrolled Agent | Former IRS Revenue Officer
+[Author Name] spent [X] years as an IRS Revenue Officer before founding TaxCase Review.
+[Link: More articles by this author]
