@@ -27,3 +27,10 @@ logs/
 /scripts.zip
 # Large local DB dump — archived on disk, never committed (exceeds GitHub's limit)
 leadflow_backup.sql
+
+blog_drafts/
+reels/
+landing/
+lib/
+tests/
+Image Assets/
