@@ -3,31 +3,37 @@ illinois_scraper.py
 ===================
 Illinois data sources for the TaxCase Review data engine.
 
-LIENS  — Cook County (Chicago) federal tax lien filings.
-         Recorder of Deeds: https://ccrd.cookcountyil.gov
-         Open data (if a recorder dataset is published): data.cookcountyil.gov
+LIENS  — Illinois Secretary of State UCC / Federal Tax Lien index (Selenium).
+         https://apps.ilsos.gov/uccsearch/
+         Filters document type = Federal Tax Lien for debtor types
+         Organization (businesses/contractors) and Individual (sole props),
+         paginates (2s/page, max 1000/run), and extracts debtor name, city/zip,
+         filing date, lien amount, and file number. Checkpoints to
+         illinois_scraper_checkpoint.json.
 LICENSES — Illinois Dept. of Financial & Professional Regulation (IDFPR).
          https://www.idfpr.com/LicenseLookUp/licenselookup.asp
          Target license types: roofing (058), HVAC (004),
          general contractor (016), electrician (017).
 
-HTTP-first (hard rule #6). Cook County's recorder search is an ASP/anti-bot
-portal with no documented anonymous JSON API; if a Socrata dataset id is
-provided via COOK_LIENS_DATASET we query it, otherwise we probe the recorder
-and return 0 (pending Selenium) rather than crash. IDFPR's lookup is a classic
-ASP.NET form — we fetch the page (viewstate + token), POST per license type, and
-parse the results table; unparseable responses return 0.
+Both are best-effort against live state portals. apps.ilsos.gov sits behind a
+WAF/anti-bot layer and IDFPR is a classic ASP.NET form, so each function detects
+a block / unparseable response and returns 0 with clear logging (+ debug
+artifacts under data/data_engine/il_debug/) rather than crash the daily runner.
 
 DB writes:
-  liens    -> normalized_liens     (state='IL', lien_source='cook_recorder')
+  liens    -> normalized_liens     (state='IL', lien_source='IL_SOS_UCC',
+                                     county derived from city)
   licenses -> normalized_contacts  (state='IL', license_source='IL_DPR')
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sys
+import time
+from datetime import date, datetime
 from pathlib import Path
 
 LEADFLOW_DIR = Path(__file__).resolve().parents[2]
@@ -42,9 +48,6 @@ from scripts.data_engine.data_collector import (  # noqa: E402
 )
 
 IDFPR_LOOKUP = "https://www.idfpr.com/LicenseLookUp/licenselookup.asp"
-COOK_RECORDER = "https://ccrd.cookcountyil.gov"
-# Optional Socrata recorder dataset (id) on data.cookcountyil.gov.
-COOK_LIENS_DATASET = os.getenv("COOK_LIENS_DATASET", "")
 
 # IDFPR license type codes from the task.
 IL_LICENSE_TYPES = {
@@ -54,71 +57,346 @@ IL_LICENSE_TYPES = {
     "017": "electrician",
 }
 
+# ── IL Secretary of State UCC / Federal Tax Lien search (Selenium) ─────────────
+IL_SOS_UCC_URL  = os.getenv("IL_SOS_UCC_URL", "https://apps.ilsos.gov/uccsearch/")
+IL_DEBTOR_TYPES = ("Organization", "Individual")
+IL_PAGE_DELAY   = 2.0          # seconds between result pages (rate limit)
+IL_MAX_RECORDS  = 1000         # hard cap per run
+IL_CHECKPOINT   = LEADFLOW_DIR / "data" / "data_engine" / "illinois_scraper_checkpoint.json"
+IL_DEBUG_DIR    = LEADFLOW_DIR / "data" / "data_engine" / "il_debug"
 
-# ── LIENS — Cook County ────────────────────────────────────────────────────────
-def collect_il_liens(limit: int = MAX_PER_COUNTY) -> int:
-    """Federal tax liens for Cook County. Uses a Socrata dataset when configured
-    (COOK_LIENS_DATASET), otherwise probes the recorder portal and reports the
-    auth/anti-bot wall. Returns count of NEW liens (state='IL')."""
-    if COOK_LIENS_DATASET:
-        return _collect_il_liens_socrata(limit)
-
-    r = http_get(COOK_RECORDER)
-    reachable = r is not None and r.status_code < 400
-    print("    IL/Cook recorder: "
-          + ("reachable but no anonymous lien API/dataset"
-             if reachable else "unreachable")
-          + " — set COOK_LIENS_DATASET or wire Selenium. (0 liens)")
-    return 0
+# Major IL cities -> county (for deriving county from a debtor's city).
+IL_CITY_COUNTY = {
+    "chicago": "Cook", "cicero": "Cook", "evanston": "Cook", "schaumburg": "Cook",
+    "skokie": "Cook", "oak park": "Cook", "berwyn": "Cook", "aurora": "Kane",
+    "elgin": "Kane", "naperville": "DuPage", "wheaton": "DuPage", "joliet": "Will",
+    "rockford": "Winnebago", "peoria": "Peoria", "springfield": "Sangamon",
+    "champaign": "Champaign", "urbana": "Champaign", "bloomington": "McLean",
+    "decatur": "Macon", "waukegan": "Lake", "elmhurst": "DuPage",
+    "des plaines": "Cook", "arlington heights": "Cook", "palatine": "Cook",
+}
 
 
-def _collect_il_liens_socrata(limit: int) -> int:
-    url = f"https://data.cookcountyil.gov/resource/{COOK_LIENS_DATASET}.json"
-    r = http_get(url, params={"$limit": min(limit, MAX_PER_COUNTY)})
-    if r is None or r.status_code != 200:
-        print(f"    IL/Cook Socrata fetch failed "
-              f"(status={getattr(r,'status_code','n/a')}) — 0 liens.")
-        return 0
+# ── LIENS — IL Secretary of State UCC / Federal Tax Lien index (Selenium) ──────
+def collect_il_liens(limit: int = IL_MAX_RECORDS,
+                     debtor_types=IL_DEBTOR_TYPES,
+                     dry_run: bool = False, headless: bool = True) -> int:
+    """
+    Selenium scrape of the IL SOS UCC/Federal-Tax-Lien index
+    (apps.ilsos.gov/uccsearch). For each debtor type (Organization, then
+    Individual) it filters document type = Federal Tax Lien, paginates the
+    results (2s/page), extracts debtor name + address + filing date + amount +
+    file number, and stores them in normalized_liens (state='IL',
+    lien_source='IL_SOS_UCC', county derived from city). Checkpoints to
+    illinois_scraper_checkpoint.json; max 1000 records/run. dry_run parses +
+    reports without writing. Returns count stored (or parsed, in dry_run).
+    """
+    limit = min(limit, IL_MAX_RECORDS)
+    cp = _il_load_checkpoint()
+    seen = set(cp.get("seen_file_numbers", []))
+    driver = None
+    all_rows: list[dict] = []
     try:
-        records = r.json()
-    except ValueError:
-        return 0
+        driver = _il_get_driver(headless=headless)
+        if not _il_open_ucc_search(driver):
+            print("    IL/SOS UCC: search form unreachable — the apps.ilsos.gov "
+                  "portal blocked the automated client (WAF/anti-bot) or the page "
+                  "moved. See data/data_engine/il_debug/. (0 liens)")
+            return 0
+        for dtype in debtor_types:
+            if len(all_rows) >= limit:
+                break
+            try:
+                rows = _il_ucc_search(driver, dtype, limit - len(all_rows), seen)
+            except Exception as e:
+                print(f"      [{dtype}] search error: {type(e).__name__}: {str(e)[:160]}")
+                rows = []
+            for r in rows:
+                r["debtor_type"] = dtype
+                if r.get("file_number"):
+                    seen.add(r["file_number"])
+            print(f"    IL/SOS UCC: {dtype} -> {len(rows)} FTL rows")
+            all_rows.extend(rows)
+    except Exception as e:
+        print(f"    IL/SOS UCC selenium error: {type(e).__name__}: {str(e)[:200]}")
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
+    all_rows = all_rows[:limit]
+    cp["seen_file_numbers"] = list(seen)[-5000:]
+    cp["last_run"] = datetime.now().isoformat(timespec="seconds")
+    _il_save_checkpoint(cp)
+
+    if dry_run:
+        print(f"    [DRY RUN] {len(all_rows)} IL FTL liens parsed (not stored):")
+        for r in all_rows[:15]:
+            print(f"       {(r.get('debtor_name') or '')[:38]:<38} | "
+                  f"{(r.get('city') or ''):<14} | {r.get('filing_date','')} | "
+                  f"{r.get('file_number','')}")
+        return len(all_rows)
+    return _store_il_liens(all_rows)
+
+
+def _il_get_driver(headless: bool = True):
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    opts = Options()
+    if headless:
+        opts.add_argument("--headless=new")
+    for a in ("--no-sandbox", "--disable-dev-shm-usage", "--window-size=1920,1080",
+              "--disable-blink-features=AutomationControlled"):
+        opts.add_argument(a)
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option("useAutomationExtension", False)
+    driver = webdriver.Chrome(options=opts)
+    driver.set_page_load_timeout(60)
+    driver.execute_script(
+        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+    return driver
+
+
+def _il_save_debug(driver, label: str):
+    try:
+        IL_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        (IL_DEBUG_DIR / f"{label}.html").write_text(
+            driver.page_source, encoding="utf-8", errors="replace")
+        try:
+            driver.save_screenshot(str(IL_DEBUG_DIR / f"{label}.png"))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _il_load_checkpoint() -> dict:
+    try:
+        if IL_CHECKPOINT.exists():
+            return json.loads(IL_CHECKPOINT.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _il_save_checkpoint(cp: dict):
+    try:
+        IL_CHECKPOINT.parent.mkdir(parents=True, exist_ok=True)
+        IL_CHECKPOINT.write_text(json.dumps(cp, indent=2, default=str))
+    except Exception:
+        pass
+
+
+_IL_WAF_MARKERS = ("page you are looking for is not available", "reference id",
+                   "access denied", "request blocked", "forbidden")
+
+
+def _il_open_ucc_search(driver) -> bool:
+    """Open the UCC search page; click through any disclaimer/Accept gate; return
+    True when a usable search form (with a Federal Tax Lien option) is present."""
+    from selenium.webdriver.common.by import By
+    driver.get(IL_SOS_UCC_URL)
+    time.sleep(3)
+    low = driver.page_source.lower()
+    if any(m in low for m in _IL_WAF_MARKERS):
+        _il_save_debug(driver, "00_blocked")
+        return False
+    # Disclaimer / "I Accept" / "Continue" gate, if any.
+    for kw in ("accept", "agree", "continue", "search"):
+        for e in driver.find_elements(
+                By.CSS_SELECTOR, "button, input[type='submit'], input[type='button'], a"):
+            lbl = (e.get_attribute("value") or e.text or "").strip().lower()
+            if lbl in (kw, "i " + kw, kw + " >"):
+                try:
+                    e.click(); time.sleep(2)
+                except Exception:
+                    pass
+                break
+    _il_save_debug(driver, "01_search_form")
+    # Usable if a control exposes a "Federal Tax Lien" choice, or any select exists.
+    if "federal tax lien" in driver.page_source.lower():
+        return True
+    return len(driver.find_elements(By.TAG_NAME, "select")) > 0
+
+
+def _il_select_by_text(driver, want_substrings) -> bool:
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import Select
+    wants = [w.lower() for w in want_substrings]
+    for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+        try:
+            sel = Select(sel_el)
+            for opt in sel.options:
+                if opt.text and any(w in opt.text.lower() for w in wants):
+                    sel.select_by_visible_text(opt.text)
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def _il_ucc_search(driver, debtor_type: str, max_rows: int, seen: set) -> list:
+    """Filter to Federal Tax Lien + debtor type, submit, and paginate results
+    (2s/page) until exhausted or max_rows. Returns parsed rows (new file numbers
+    only)."""
+    from selenium.webdriver.common.by import By
+
+    if not _il_open_ucc_search(driver):
+        return []
+    _il_select_by_text(driver, ["federal tax lien"])          # document/lien type
+    _il_select_by_text(driver, [debtor_type.lower()])         # Organization / Individual
+    _il_select_by_text(driver, ["illinois"])                  # state, if a dropdown
+    # Submit the search.
+    btn = None
+    for sel in ("input[type='submit'][value*='Search' i]",
+                "button", "input[type='submit']", "input[type='button']"):
+        for e in driver.find_elements(By.CSS_SELECTOR, sel):
+            lbl = (e.get_attribute("value") or e.text or "").lower()
+            if "search" in lbl:
+                btn = e; break
+        if btn:
+            break
+    try:
+        if btn:
+            btn.click()
+        else:
+            driver.find_elements(By.TAG_NAME, "form")[0].submit()
+    except Exception:
+        pass
+    time.sleep(IL_PAGE_DELAY)
+
+    rows: list[dict] = []
+    page = 0
+    while len(rows) < max_rows and page < 60:
+        page += 1
+        _il_save_debug(driver, f"02_{debtor_type}_p{page}")
+        page_rows = _il_parse_results(driver.page_source)
+        fresh = [r for r in page_rows
+                 if r.get("file_number") and r["file_number"] not in seen]
+        rows.extend(fresh)
+        # advance to next page
+        nxt = None
+        for e in driver.find_elements(By.CSS_SELECTOR, "a, button, input[type='submit']"):
+            lbl = (e.get_attribute("value") or e.text or "").strip().lower()
+            if lbl in ("next", "next >", ">", "next page"):
+                nxt = e; break
+        if not nxt or not page_rows:
+            break
+        try:
+            nxt.click()
+        except Exception:
+            break
+        time.sleep(IL_PAGE_DELAY)
+    return rows[:max_rows]
+
+
+_IL_DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+_IL_AMT_RE  = re.compile(r"\$\s?[\d,]+(?:\.\d{2})?")
+_IL_CSZ_RE  = re.compile(r"([A-Za-z .'-]+),?\s+(IL|ILLINOIS)\s+(\d{5})", re.I)
+
+
+def _il_parse_results(html: str) -> list[dict]:
+    """Heuristic parse of a UCC results table into structured lien rows. A row
+    needs at least a name and a filing date to count."""
+    out: list[dict] = []
+    try:
+        soup = BeautifulSoup(html, "lxml")
+        for tr in soup.find_all("tr"):
+            cells = [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
+            if len(cells) < 2:
+                continue
+            joined = " ".join(cells)
+            dm = _IL_DATE_RE.search(joined)
+            if not dm:
+                continue
+            # debtor name: first cell with >=2 alpha words, not the date
+            name = ""
+            for c in cells:
+                if _IL_DATE_RE.fullmatch(c.strip()):
+                    continue
+                letters = re.sub(r"[^A-Za-z ]", "", c).strip()
+                if len(letters.split()) >= 2 and len(letters) >= 5:
+                    name = c
+                    break
+            if not name or name.lower().startswith(("debtor", "name", "secured", "file")):
+                continue
+            city = zipc = ""
+            cm = _IL_CSZ_RE.search(joined)
+            if cm:
+                city, _, zipc = cm.group(1).strip(), cm.group(2), cm.group(3)
+            amt = None
+            am = _IL_AMT_RE.search(joined)
+            if am:
+                try:
+                    amt = float(am.group(0).replace("$", "").replace(",", "").strip())
+                except ValueError:
+                    amt = None
+            # file number: a long digit/dash token
+            fn = ""
+            for c in cells:
+                t = c.strip()
+                if re.fullmatch(r"[0-9][0-9\-]{5,}", t):
+                    fn = t; break
+            out.append({"debtor_name": name.strip()[:250], "city": city[:100],
+                        "zip": zipc[:20], "filing_date": dm.group(0),
+                        "lien_amount": amt, "file_number": fn})
+    except Exception:
+        pass
+    return out
+
+
+def _il_city_to_county(city: str) -> str:
+    return IL_CITY_COUNTY.get((city or "").strip().lower(), "Cook")
+
+
+def _il_to_iso(s):
+    s = (s or "").strip()
+    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _store_il_liens(rows: list[dict]) -> int:
     conn = get_connection()
     conn.autocommit = False
     added = 0
     try:
-        for rec in records:
-            # Field names vary by dataset; try common ones.
-            name = (rec.get("debtor") or rec.get("grantor")
-                    or rec.get("name") or "").strip()
-            if not name:
+        for rec in rows:
+            name = (rec.get("debtor_name") or "").strip()
+            if len(name) < 3:
                 continue
-            doc = (rec.get("document_number") or rec.get("doc_number")
-                   or rec.get("id") or name)
-            filed = (rec.get("recorded_date") or rec.get("filing_date")
-                     or rec.get("date") or "")[:10] or None
-            h = hashlib.md5(f"cook|{doc}".encode()).hexdigest()
+            county_name = _il_city_to_county(rec.get("city"))
+            filed = _il_to_iso(rec.get("filing_date"))
+            key = rec.get("file_number") or f"{name}|{rec.get('filing_date')}"
+            h = hashlib.md5(f"il_sos_ucc|{key}".encode()).hexdigest()
             with conn.cursor() as cur:
-                county_id = get_or_create_county(cur, "Cook", "IL")
+                county_id = get_or_create_county(cur, county_name, "IL")
                 cur.execute("""
                     INSERT INTO normalized_liens
                         (county_id, debtor_name, business_name, filing_type,
                          lien_type, lien_source, normalized_hash, state,
-                         filed_date, created_at)
+                         amount, filed_date, city, zip, created_at)
                     VALUES (%s,%s,%s,'FEDERAL TAX LIEN','FEDERAL TAX LIEN',
-                            'cook_recorder',%s,'IL',%s,NOW())
+                            'IL_SOS_UCC',%s,'IL',%s,%s,%s,%s,NOW())
                     ON CONFLICT (normalized_hash) DO NOTHING
                     RETURNING id
                 """, (county_id, name[:250],
-                      name[:250] if is_business(name) else None, h, filed))
+                      name[:250] if is_business(name) else None,
+                      h, rec.get("lien_amount"), filed,
+                      (rec.get("city") or "")[:100] or None,
+                      (rec.get("zip") or "")[:20] or None))
                 if cur.fetchone():
                     added += 1
             conn.commit()
-        print(f"    IL/Cook Socrata: +{added} new IL liens")
+        print(f"    IL/SOS UCC: +{added} new IL liens")
     except Exception as e:
         conn.rollback()
-        print(f"    IL/Cook store error: {e}")
+        print(f"    IL/SOS UCC store error: {e}")
     finally:
         release_connection(conn)
     return added
@@ -237,3 +515,32 @@ def _store_il_licenses(rows: list[dict]) -> int:
     finally:
         release_connection(conn)
     return added
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Illinois SOS UCC lien + IDFPR license scraper")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="search + parse, but do not write to the DB")
+    ap.add_argument("--debtor-types", default=None,
+                    help="comma list (default: Organization,Individual)")
+    ap.add_argument("--limit", type=int, default=IL_MAX_RECORDS)
+    ap.add_argument("--no-headless", action="store_true")
+    ap.add_argument("--licenses", action="store_true",
+                    help="run the IDFPR license scrape instead of SOS UCC liens")
+    args = ap.parse_args()
+
+    if args.licenses:
+        print(f"IL licenses: {collect_il_licenses(args.limit)}")
+        return
+    dtypes = (tuple(t.strip() for t in args.debtor_types.split(",") if t.strip())
+              if args.debtor_types else IL_DEBTOR_TYPES)
+    n = collect_il_liens(limit=args.limit, debtor_types=dtypes,
+                         dry_run=args.dry_run, headless=not args.no_headless)
+    tag = "(dry-run) " if args.dry_run else ""
+    print(f"\nIL liens {tag}result: {n}")
+
+
+if __name__ == "__main__":
+    main()
