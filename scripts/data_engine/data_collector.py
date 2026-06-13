@@ -224,76 +224,179 @@ def collect_liens(state_code: str, county: Optional[str] = None) -> int:
     return collect_liens_recorder_pending(s, county)
 
 
-def collect_liens_ny_acris(county: Optional[str] = None,
-                           doc_type: str = "FTLIEN") -> int:
+# ── NYC ACRIS (Socrata open data) ─────────────────────────────────────────────
+ACRIS_MASTER   = "https://data.cityofnewyork.us/resource/8h5j-fqxa.json"
+ACRIS_PARTIES  = "https://data.cityofnewyork.us/resource/636b-3b5g.json"
+ACRIS_DOCCODES = "https://data.cityofnewyork.us/resource/7isb-wh4c.json"
+# Optional Socrata app token raises the anonymous rate limit. Either name works.
+NYC_APP_TOKEN  = os.getenv("NYC_APP_TOKEN") or os.getenv("SOCRATA_APP_TOKEN") or ""
+ACRIS_BOROUGH  = {"1": "New York", "2": "Bronx", "3": "Kings",
+                  "4": "Queens", "5": "Richmond"}
+# Party names that are the lienholder (the IRS / govt), never the debtor.
+GOV_PARTY_MARKERS = (
+    "INTERNAL REVENUE", "UNITED STATES", "U S A", "U.S.A", "USA",
+    "DEPARTMENT OF TREASURY", "DEPT OF TREASURY", "SECRETARY OF",
+    "STATE OF NEW YORK", "DEPARTMENT OF TAXATION", "CITY OF NEW YORK",
+    "NYS ", "NYC ",
+)
+
+
+def _socrata_headers() -> dict:
+    return {"X-App-Token": NYC_APP_TOKEN} if NYC_APP_TOKEN else {}
+
+
+def _acris_in_clause(values) -> str:
+    """SoQL IN list with single-quote escaping: ('A','B')."""
+    return "(" + ",".join("'" + str(v).replace("'", "''") + "'"
+                          for v in values) + ")"
+
+
+def _acris_borough_county(code) -> str:
+    return ACRIS_BOROUGH.get(str(code).strip(), "New York")
+
+
+def _acris_is_gov(name: str) -> bool:
+    u = (name or "").upper()
+    return any(m in u for m in GOV_PARTY_MARKERS)
+
+
+def _acris_pick_debtor(parties: list) -> dict:
     """
-    NYC ACRIS open data (Socrata, free, no auth).
-      Master:  https://data.cityofnewyork.us/resource/8h5j-fqxa.json
-      Parties: https://data.cityofnewyork.us/resource/636b-3b5g.json
-    Pulls federal-tax-lien master records, joins party names, writes to
-    normalized_liens (state='NY'). Idempotent via normalized_hash + checkpoint.
-    Max 500 new records per run (hard rule #5).
+    From a document's ACRIS parties pick the taxpayer/debtor: the non-government
+    party. ACRIS party_type '2' is the party the instrument is filed against
+    (the debtor on a lien), so prefer '2', then '1'. Returns the party dict
+    (with name/address/city/state/zip) or {} if none usable.
+    """
+    named = [p for p in parties if (p.get("name") or "").strip()]
+    nongov = [p for p in named if not _acris_is_gov(p.get("name", ""))]
+    pool = nongov or named
+    if not pool:
+        return {}
+    pool.sort(key=lambda p: (str(p.get("party_type")) != "2",
+                             str(p.get("party_type")) != "1"))
+    return pool[0]
+
+
+def _resolve_acris_doc_types() -> list:
+    """
+    Determine the ACRIS doc_type code(s) for federal tax liens. Self-correcting:
+      1. NY_ACRIS_DOC_TYPES env override (comma list), else
+      2. cached codes from a prior discovery, else
+      3. discover from the ACRIS Document Control Codes dataset by matching
+         descriptions containing 'FEDERAL TAX LIEN', else
+      4. documented fallbacks ['FTLIEN', 'FTL'].
+    """
+    env = os.getenv("NY_ACRIS_DOC_TYPES", "").strip()
+    if env:
+        return [c.strip() for c in env.split(",") if c.strip()]
+
+    cached = _load_checkpoints().get("ny_acris_doc_codes")
+    if cached:
+        return cached
+
+    codes = []
+    r = http_get(ACRIS_DOCCODES, params={"$limit": 2000},
+                 headers=_socrata_headers())
+    if r is not None and r.status_code == 200:
+        try:
+            for row in r.json():
+                desc = (row.get("doc_type_description")
+                        or row.get("description") or "").upper()
+                code = (row.get("doc_type") or row.get("doc__type") or "").strip()
+                if code and "FEDERAL TAX LIEN" in desc:
+                    codes.append(code)
+        except ValueError:
+            pass
+    if not codes:
+        codes = ["FTLIEN", "FTL"]
+    _save_checkpoint("ny_acris_doc_codes", codes)
+    return codes
+
+
+def _acris_fetch_parties(doc_ids: list, headers: dict, chunk: int = 75) -> dict:
+    """Bulk-fetch parties for many documents at once. Returns doc_id -> [party]."""
+    out: dict[str, list] = {}
+    for i in range(0, len(doc_ids), chunk):
+        sub = doc_ids[i:i + chunk]
+        r = http_get(ACRIS_PARTIES, headers=headers, params={
+            "$where": f"document_id in {_acris_in_clause(sub)}",
+            "$limit": chunk * 25,
+        })
+        if r is None or r.status_code != 200:
+            continue
+        try:
+            for p in r.json():
+                out.setdefault(p.get("document_id"), []).append(p)
+        except ValueError:
+            continue
+    return out
+
+
+def collect_liens_ny_acris(county: Optional[str] = None,
+                           doc_type: Optional[str] = None) -> int:
+    """
+    NYC ACRIS open data (Socrata, free; optional app token).
+      Master:  8h5j-fqxa   Parties: 636b-3b5g   Doc codes: 7isb-wh4c
+    Pulls federal-tax-lien master records, bulk-joins party names, and writes
+    debtor + address to normalized_liens (state='NY').
+
+    Incremental: a recorded_datetime high-watermark (checkpointed) means each
+    run only pulls documents recorded since the last run — no gaps, no drift.
+    First run defaults to the last 365 days. Idempotent via normalized_hash.
+    Max 500 records per run (hard rule #5).
     """
     import hashlib
 
-    MASTER = "https://data.cityofnewyork.us/resource/8h5j-fqxa.json"
-    PARTIES = "https://data.cityofnewyork.us/resource/636b-3b5g.json"
-    BOROUGH = {  # recorded_borough code -> county name
-        "1": "New York", "2": "Bronx", "3": "Kings",
-        "4": "Queens", "5": "Richmond",
-    }
+    headers = _socrata_headers()
+    codes = [doc_type] if doc_type else _resolve_acris_doc_types()
+    code_in = _acris_in_clause(codes)
 
-    cp_key = f"ny_acris_offset_{doc_type}"
-    offset = _load_checkpoints().get(cp_key, 0)
+    wm_key = "ny_acris_recorded_watermark"
+    default_wm = date.today().replace(year=date.today().year - 1).isoformat() \
+        + "T00:00:00.000"
+    watermark = _load_checkpoints().get(wm_key) or default_wm
 
-    r = http_get(MASTER, params={
-        "$where": f"doc_type='{doc_type}'",
-        "$order": "document_date DESC",
+    r = http_get(ACRIS_MASTER, headers=headers, params={
+        "$where": f"doc_type in {code_in} AND recorded_datetime > '{watermark}'",
+        "$order": "recorded_datetime",
         "$limit": MAX_PER_COUNTY,
-        "$offset": offset,
     })
     if r is None or r.status_code != 200:
         print(f"    ACRIS master fetch failed "
-              f"(status={getattr(r, 'status_code', 'n/a')})")
+              f"(status={getattr(r, 'status_code', 'n/a')}, codes={codes})")
         return 0
 
-    masters = r.json()
-    if not masters:
-        print("    ACRIS: no more master records — resetting offset.")
-        _save_checkpoint(cp_key, 0)
+    try:
+        masters = r.json()
+    except ValueError:
+        print("    ACRIS: master response was not JSON")
         return 0
+    if not masters:
+        print(f"    ACRIS: nothing new since {watermark} (codes={codes})")
+        return 0
+
+    doc_ids = [m.get("document_id") for m in masters if m.get("document_id")]
+    parties_by_doc = _acris_fetch_parties(doc_ids, headers)
 
     conn = get_connection()
     conn.autocommit = False
     added = 0
+    max_seen = watermark
     try:
         for m in masters:
             doc_id = m.get("document_id")
             if not doc_id:
                 continue
-            borough = str(m.get("recorded_borough", "")).strip()
-            county_name = BOROUGH.get(borough, "New York")
+            rec_dt = m.get("recorded_datetime") or ""
+            if rec_dt > max_seen:
+                max_seen = rec_dt
+
+            county_name = _acris_borough_county(m.get("recorded_borough"))
             if county and county.lower() not in county_name.lower():
                 continue
 
-            # Fetch the debtor party (party_type 2 = grantee/borrower in ACRIS;
-            # for liens the taxpayer is typically the party of interest).
-            pr = http_get(PARTIES, params={
-                "$where": f"document_id='{doc_id}'",
-                "$limit": 10,
-            })
-            debtor = ""
-            if pr is not None and pr.status_code == 200:
-                parties = pr.json()
-                # Prefer the non-government party as the debtor.
-                for p in parties:
-                    nm = (p.get("name") or "").strip()
-                    if nm and "INTERNAL REVENUE" not in nm.upper() \
-                            and "UNITED STATES" not in nm.upper():
-                        debtor = nm
-                        break
-                if not debtor and parties:
-                    debtor = (parties[0].get("name") or "").strip()
+            party = _acris_pick_debtor(parties_by_doc.get(doc_id, []))
+            debtor = (party.get("name") or "").strip()
             if not debtor:
                 continue
 
@@ -302,7 +405,8 @@ def collect_liens_ny_acris(county: Optional[str] = None,
                 amount = float(amount) if amount not in (None, "") else None
             except (TypeError, ValueError):
                 amount = None
-            filed = (m.get("document_date") or "")[:10] or None
+            filed = (m.get("document_date") or m.get("recorded_datetime")
+                     or "")[:10] or None
 
             h = hashlib.md5(f"acris|{doc_id}".encode()).hexdigest()
             with conn.cursor() as cur:
@@ -311,21 +415,25 @@ def collect_liens_ny_acris(county: Optional[str] = None,
                     INSERT INTO normalized_liens
                         (county_id, debtor_name, business_name, filing_type,
                          lien_type, lien_source, normalized_hash, state,
-                         amount, filed_date, created_at)
+                         amount, filed_date, address_1, city, zip, created_at)
                     VALUES (%s,%s,%s,'FEDERAL TAX LIEN','FEDERAL TAX LIEN',
-                            'nyc_acris',%s,'NY',%s,%s,NOW())
+                            'nyc_acris',%s,'NY',%s,%s,%s,%s,%s,NOW())
                     ON CONFLICT (normalized_hash) DO NOTHING
                     RETURNING id
                 """, (county_id, debtor[:250],
                       debtor[:250] if is_business(debtor) else None,
-                      h, amount, filed))
+                      h, amount, filed,
+                      (party.get("address_1") or "")[:250] or None,
+                      (party.get("city") or "")[:100] or None,
+                      (party.get("zip") or "")[:20] or None))
                 if cur.fetchone():
                     added += 1
             conn.commit()
 
-        _save_checkpoint(cp_key, offset + len(masters))
+        if max_seen > watermark:
+            _save_checkpoint(wm_key, max_seen)
         print(f"    ACRIS: +{added} new NY liens "
-              f"(scanned {len(masters)}, offset now {offset + len(masters)})")
+              f"(scanned {len(masters)}, watermark -> {max_seen})")
     except Exception as e:
         conn.rollback()
         print(f"    ACRIS error: {e}")
