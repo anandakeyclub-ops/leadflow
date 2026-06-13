@@ -31,6 +31,8 @@ import hashlib
 import os
 import re
 import sys
+import time
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 LEADFLOW_DIR = Path(__file__).resolve().parents[2]
@@ -44,9 +46,19 @@ from scripts.data_engine.data_collector import (  # noqa: E402
     http_get, get_or_create_county, MAX_PER_COUNTY, is_business,
 )
 
-GSCCCA_BASE   = "https://search.gsccca.org"
-GSCCCA_LIEN   = "https://search.gsccca.org/Lien/namesearch.asp"
-GA_SOS_SEARCH = "https://ecorp.sos.ga.gov/BusinessSearch"
+GSCCCA_BASE        = "https://search.gsccca.org"
+GSCCCA_LIEN        = "https://search.gsccca.org/Lien/namesearch.asp"
+GSCCCA_LOGIN_URL   = "https://apps.gsccca.org/login.asp"
+GSCCCA_SEARCH_URL  = "https://search.gsccca.org/Lien/namesearch.asp"
+GA_SOS_SEARCH      = "https://ecorp.sos.ga.gov/BusinessSearch"
+
+# Verified GSCCCA lien-search form values (see namesearch.asp form):
+#   txtInstrCode '3' = Federal Tax Lien
+#   txtPartyType '1' = Direct Party (Debtor)  -> the taxpayer, not the IRS
+GSCCCA_INSTR_FTL   = "3"
+GSCCCA_PARTY_DEBTOR = "1"
+GA_LIEN_COUNTIES   = ["Fulton", "Gwinnett", "DeKalb", "Cobb"]
+GA_DEBUG_DIR       = LEADFLOW_DIR / "data" / "data_engine" / "ga_debug"
 
 # Contractor entity types we care about (search keywords).
 GA_CONTRACTOR_KEYWORDS = [
@@ -55,57 +67,268 @@ GA_CONTRACTOR_KEYWORDS = [
 ]
 
 
-# ── LIENS — GSCCCA ─────────────────────────────────────────────────────────────
-def collect_ga_liens(limit: int = MAX_PER_COUNTY) -> int:
-    """Attempt the GSCCCA statewide federal-tax-lien index over HTTP.
+# ── LIENS — GSCCCA (authenticated Selenium) ────────────────────────────────────
+def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
+                     days_back: int = 3650, dry_run: bool = False,
+                     headless: bool = True) -> int:
+    """
+    Log into GSCCCA (GA_GSCCCA_USERNAME / GA_GSCCCA_PASSWORD) with Selenium,
+    run a Federal Tax Lien (instrument code 3) search per county
+    (default Fulton, Gwinnett, DeKalb, Cobb) over the last `days_back` days,
+    parse the debtor names, and store them in normalized_liens (state='GA').
+    dry_run parses + reports but does not write. Falls back to the HTTP probe
+    if credentials are absent. Returns count stored (or parsed, in dry_run).
+    """
+    user = os.getenv("GA_GSCCCA_USERNAME")
+    pw   = os.getenv("GA_GSCCCA_PASSWORD")
+    if not user or not pw:
+        print("    GA/GSCCCA: GA_GSCCCA_USERNAME/PASSWORD not set — HTTP fallback.")
+        return _collect_ga_liens_http(limit)
 
-    GSCCCA gates lien searches behind a registered login; an anonymous request
-    is redirected to / returns the sign-in page. We detect that and return 0
-    (a credentialed Selenium path is the documented next step). Returns count of
-    NEW liens written to normalized_liens (state='GA')."""
-    r = http_get(GSCCCA_LIEN, params={"bsearch": "Federal Tax Lien"})
-    if r is None:
-        print("    GA/GSCCCA: unreachable — 0 liens.")
-        return 0
+    counties = counties or GA_LIEN_COUNTIES
+    driver = None
+    all_rows: list[dict] = []
+    try:
+        driver = _ga_get_driver(headless=headless)
+        if not _gsccca_login(driver, user, pw):
+            print("    GA/GSCCCA: login failed — see data/data_engine/ga_debug/.")
+            return 0
+        print("    GA/GSCCCA: logged in.")
+        for county in counties:
+            if len(all_rows) >= limit:
+                break
+            try:
+                rows = _gsccca_search_county(driver, county, days_back,
+                                             limit - len(all_rows))
+            except Exception as e:
+                print(f"      [{county}] search error: {type(e).__name__}: {str(e)[:160]}")
+                rows = []
+            for r in rows:
+                r["county"] = county
+            print(f"    GA/GSCCCA: {county} -> {len(rows)} FTL rows")
+            all_rows.extend(rows)
+            time.sleep(1.0)  # polite delay between counties
+    except Exception as e:
+        print(f"    GA/GSCCCA selenium error: {type(e).__name__}: {str(e)[:200]}")
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
-    body = r.text or ""
-    if (r.status_code in (301, 302, 401, 403)
-            or "login" in body.lower() or "sign in" in body.lower()
-            or "username" in body.lower()):
-        print("    GA/GSCCCA: login wall detected (free registration + anti-bot)"
-              " — HTTP path blocked. Pending GSCCCA_USERNAME/PASSWORD + Selenium."
-              " (0 liens)")
-        return 0
+    all_rows = all_rows[:limit]
+    if dry_run:
+        print(f"    [DRY RUN] {len(all_rows)} GA FTL liens parsed (not stored):")
+        for r in all_rows[:15]:
+            print(f"       {(r.get('name') or '')[:42]:<42} | "
+                  f"{r.get('county',''):<10} | {r.get('date','')}")
+        return len(all_rows)
+    return _store_ga_liens(all_rows)
 
-    rows = _parse_gsccca_results(body)
-    if not rows:
-        print("    GA/GSCCCA: no parseable federal-tax-lien rows in response"
-              " (markup change or empty) — 0 liens.")
-        return 0
 
-    return _store_ga_liens(rows[:limit])
+def _ga_get_driver(headless: bool = True):
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    opts = Options()
+    if headless:
+        opts.add_argument("--headless=new")
+    for a in ("--no-sandbox", "--disable-dev-shm-usage", "--window-size=1920,1080",
+              "--disable-blink-features=AutomationControlled"):
+        opts.add_argument(a)
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option("useAutomationExtension", False)
+    driver = webdriver.Chrome(options=opts)
+    driver.set_page_load_timeout(60)
+    driver.execute_script(
+        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+    return driver
+
+
+def _ga_save_debug(driver, label: str):
+    """Save page HTML + screenshot so the live DOM can be inspected/refined."""
+    try:
+        GA_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        (GA_DEBUG_DIR / f"{label}.html").write_text(
+            driver.page_source, encoding="utf-8", errors="replace")
+        try:
+            driver.save_screenshot(str(GA_DEBUG_DIR / f"{label}.png"))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _gsccca_login(driver, user: str, pw: str) -> bool:
+    from selenium.webdriver.common.by import By
+    driver.get(GSCCCA_LOGIN_URL)
+    time.sleep(2)
+    u = driver.find_elements(By.NAME, "txtUserID")
+    p = driver.find_elements(By.NAME, "txtPassword")
+    if not u or not p:
+        _ga_save_debug(driver, "01_login_page_no_fields")
+        # If there's no password field at all we may already be authenticated.
+        return not p
+    try:
+        u[0].clear(); u[0].send_keys(user)
+        p[0].clear(); p[0].send_keys(pw)
+    except Exception as e:
+        print(f"      login fill error: {e}")
+        return False
+    # Submit the form that actually contains the password field, flipping the
+    # hidden FormSubmission flag the server checks (the page has two login forms;
+    # we must post the credential one, not the header mini-login).
+    try:
+        driver.execute_script(
+            "var p=document.getElementsByName('txtPassword')[0];"
+            "var f=(p&&p.form)?p.form:(document.frmLogin||document.getElementById('loginform'));"
+            "if(f){var fs=f.querySelector(\"input[name='FormSubmission']\");"
+            "if(fs)fs.value='True';f.submit();}")
+    except Exception:
+        try:
+            p[0].submit()
+        except Exception:
+            pass
+    time.sleep(4)
+    _ga_save_debug(driver, "02_after_login")
+
+    low = driver.page_source.lower()
+    if "log out" in low or "logout" in low or "my account" in low:
+        return True
+    # Diagnose why login did not take.
+    reasons = []
+    if any(k in low for k in ("incorrect", "invalid login", "username or password",
+                              "login failed")):
+        reasons.append("credentials rejected")
+    if re.search(r"captcha", low) and re.search(
+            r"recaptcha|g-recaptcha|captchaimage|<img[^>]*captcha|captcha\.(jpg|png|gif|aspx)",
+            low):
+        reasons.append("CAPTCHA challenge (anti-bot)")
+    print(f"    GA/GSCCCA: login did not succeed "
+          f"({', '.join(reasons) or 'still on login page'}).")
+    return False
+
+
+def _gsccca_search_county(driver, county: str, days_back: int,
+                          max_rows: int) -> list:
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import Select
+
+    driver.get(GSCCCA_SEARCH_URL)
+    time.sleep(2)
+    if driver.find_elements(By.NAME, "txtPassword"):
+        _ga_save_debug(driver, f"03_{county}_needs_login")
+        print(f"      [{county}] redirected to login — session not authenticated")
+        return []
+
+    def setsel(name, value=None, text=None) -> bool:
+        els = driver.find_elements(By.NAME, name)
+        if not els:
+            return False
+        try:
+            s = Select(els[0])
+            if value is not None:
+                s.select_by_value(value)
+            elif text is not None:
+                s.select_by_visible_text(text)
+            return True
+        except Exception:
+            return False
+
+    setsel("txtInstrCode", value=GSCCCA_INSTR_FTL)     # Federal Tax Lien
+    setsel("txtPartyType", value=GSCCCA_PARTY_DEBTOR)  # Direct Party (Debtor)
+    setsel("MaxRows", value="100")
+    if not setsel("intCountyID", text=county.upper()):
+        setsel("intCountyID", text=county)
+
+    today = date.today()
+    frm = today - timedelta(days=days_back)
+    for nm, val in (("txtFromDate", frm.strftime("%m/%d/%Y")),
+                    ("txtToDate", today.strftime("%m/%d/%Y"))):
+        els = driver.find_elements(By.NAME, nm)
+        if els:
+            try:
+                els[0].clear(); els[0].send_keys(val)
+            except Exception:
+                pass
+
+    # Click the Search button (input type=button value=Search).
+    btns = driver.find_elements(
+        By.CSS_SELECTOR,
+        "input[value='Search'], input[type='submit'][value='Search']")
+    if btns:
+        try:
+            btns[0].click()
+        except Exception:
+            pass
+    else:
+        try:
+            driver.find_element(By.NAME, "txtInstrCode").submit()
+        except Exception:
+            pass
+
+    time.sleep(5)
+    # A blank-name search may trigger a JS alert demanding a name — capture it.
+    try:
+        alert = driver.switch_to.alert
+        print(f"      [{county}] alert: {alert.text[:100]}")
+        alert.accept()
+        time.sleep(2)
+    except Exception:
+        pass
+
+    _ga_save_debug(driver, f"03_results_{county}")
+    return _parse_gsccca_results(driver.page_source)[:max_rows]
+
+
+_DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
 
 
 def _parse_gsccca_results(html: str) -> list[dict]:
-    """Best-effort parse of a GSCCCA lien results table -> [{name, county, date}]."""
+    """Parse a GSCCCA lien results page -> [{name, date}]. A row counts only if
+    it carries a filing date (MM/DD/YYYY), which filters out headers/nav/chrome."""
     out: list[dict] = []
     try:
         soup = BeautifulSoup(html, "lxml")
-        for tr in soup.select("table tr"):
-            cells = [td.get_text(strip=True) for td in tr.find_all("td")]
+        for tr in soup.find_all("tr"):
+            cells = [td.get_text(" ", strip=True)
+                     for td in tr.find_all(["td", "th"])]
             if len(cells) < 2:
                 continue
-            name = cells[0]
-            if not name or name.lower() in ("name", "debtor"):
+            joined = " ".join(cells)
+            m = _DATE_RE.search(joined)
+            if not m:
+                continue  # real lien rows always have a filing date
+            # Name = first cell with >=2 alphabetic words that isn't the date.
+            name = ""
+            for c in cells:
+                if _DATE_RE.fullmatch(c.strip()):
+                    continue
+                letters = re.sub(r"[^A-Za-z ]", "", c).strip()
+                if len(letters.split()) >= 2 and len(letters) >= 5:
+                    name = c
+                    break
+            if not name:
                 continue
-            out.append({
-                "name":   name,
-                "county": cells[1] if len(cells) > 1 else "",
-                "date":   cells[2] if len(cells) > 2 else None,
-            })
+            low = name.lower()
+            if low.startswith(("name", "party", "grantor", "grantee", "instrument")):
+                continue
+            out.append({"name": name.strip(), "date": m.group(0)})
     except Exception:
         pass
     return out
+
+
+def _to_iso_date(s):
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 def _store_ga_liens(rows: list[dict]) -> int:
@@ -115,11 +338,13 @@ def _store_ga_liens(rows: list[dict]) -> int:
     try:
         for rec in rows:
             name = (rec.get("name") or "").strip()
-            if not name:
+            if len(name) < 3:
                 continue
             county_name = (rec.get("county") or "Fulton").strip() or "Fulton"
-            h = hashlib.md5(f"gsccca|{name}|{county_name}|{rec.get('date')}"
-                            .encode()).hexdigest()
+            filed = _to_iso_date(rec.get("date"))
+            h = hashlib.md5(
+                f"gsccca|{name.upper()}|{county_name}|{rec.get('date')}"
+                .encode()).hexdigest()
             with conn.cursor() as cur:
                 county_id = get_or_create_county(cur, county_name, "GA")
                 cur.execute("""
@@ -133,7 +358,7 @@ def _store_ga_liens(rows: list[dict]) -> int:
                     RETURNING id
                 """, (county_id, name[:250],
                       name[:250] if is_business(name) else None,
-                      h, (rec.get("date") or None)))
+                      h, filed))
                 if cur.fetchone():
                     added += 1
             conn.commit()
@@ -144,6 +369,25 @@ def _store_ga_liens(rows: list[dict]) -> int:
     finally:
         release_connection(conn)
     return added
+
+
+def _collect_ga_liens_http(limit: int = MAX_PER_COUNTY) -> int:
+    """HTTP-only fallback used when no GSCCCA credentials are configured."""
+    r = http_get(GSCCCA_LIEN, params={"bsearch": "Federal Tax Lien"})
+    if r is None:
+        print("    GA/GSCCCA: unreachable — 0 liens.")
+        return 0
+    body = r.text or ""
+    if (r.status_code in (301, 302, 401, 403)
+            or "txtpassword" in body.lower() or "sign in" in body.lower()):
+        print("    GA/GSCCCA: login required — set GA_GSCCCA_USERNAME/PASSWORD "
+              "for the Selenium path. (0 liens)")
+        return 0
+    rows = _parse_gsccca_results(body)
+    if not rows:
+        print("    GA/GSCCCA: no parseable rows over HTTP — 0 liens.")
+        return 0
+    return _store_ga_liens(rows[:limit])
 
 
 # ── LICENSES — GA Secretary of State business search ───────────────────────────
@@ -264,3 +508,36 @@ def _store_ga_licenses(rows: list[dict]) -> int:
     finally:
         release_connection(conn)
     return added
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Georgia GSCCCA lien scraper")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="log in + search + parse, but do not write to the DB")
+    ap.add_argument("--counties", default=None,
+                    help="comma list (default: Fulton,Gwinnett,DeKalb,Cobb)")
+    ap.add_argument("--days", type=int, default=3650,
+                    help="lookback window in days (default 3650 = ~10 yrs)")
+    ap.add_argument("--limit", type=int, default=MAX_PER_COUNTY)
+    ap.add_argument("--no-headless", action="store_true",
+                    help="show the browser window")
+    ap.add_argument("--licenses", action="store_true",
+                    help="run the GA SOS license scrape instead of liens")
+    args = ap.parse_args()
+
+    if args.licenses:
+        print(f"GA licenses: {collect_ga_licenses(args.limit)}")
+        return
+    counties = ([c.strip() for c in args.counties.split(",") if c.strip()]
+                if args.counties else None)
+    n = collect_ga_liens(limit=args.limit, counties=counties,
+                         days_back=args.days, dry_run=args.dry_run,
+                         headless=not args.no_headless)
+    tag = "(dry-run) " if args.dry_run else ""
+    print(f"\nGA liens {tag}result: {n}")
+
+
+if __name__ == "__main__":
+    main()
