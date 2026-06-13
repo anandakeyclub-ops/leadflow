@@ -34,3 +34,6 @@ landing/
 lib/
 tests/
 Image Assets/
+
+fix_connections.py
+run_broward_daily_backfill.ps1
