@@ -41,7 +41,7 @@ from app.workers.enrich_palm_beach_from_dbpr import (
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DEFAULT_MIN_SCORE = 0.45   # Lower than permit matching since we match name→name directly
+DEFAULT_MIN_SCORE = 0.35   # Lower than permit matching since we match name→name directly
 HIGH_SCORE        = 0.75   # Treat as high confidence
 MEDIUM_SCORE      = 0.55   # Treat as medium confidence
 
@@ -80,7 +80,7 @@ def score_lien_vs_dbpr(lien_debtor: str, dbpr_row: dict) -> float:
     owner_score = token_overlap(t_debtor, no) if no else 0.0
     raw_score   = max(biz_score, owner_score)
 
-    if raw_score < 0.15:
+    if raw_score < 0.10:
         return 0.0
 
     # Boost if meaningful tokens overlap strongly

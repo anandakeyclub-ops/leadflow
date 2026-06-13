@@ -620,6 +620,25 @@ def wait_and_parse(driver) -> List[dict]:
     while True:
         print(f"  Parsing page {page}...")
 
+        # Debug: dump table IDs and row counts
+        tbl_debug = driver.execute_script("""
+            var info = {};
+            ['tableWrapper','resultsTable','searchResults','results','data'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) info[id] = el.querySelectorAll('tr').length;
+            });
+            // Also check any table with 20+ rows
+            var tables = document.querySelectorAll('table');
+            var bigTables = [];
+            tables.forEach(function(t,i) {
+                var n = t.querySelectorAll('tr,td').length;
+                if (n > 5) bigTables.push({i:i, id:t.id, cls:t.className.substring(0,20), n:n});
+            });
+            info._bigTables = bigTables.slice(0,5);
+            return info;
+        """)
+        print(f"  Table debug: {tbl_debug}")
+
         page_rows = driver.execute_script("""
             var results = [];
             var tbl = document.getElementById('tableWrapper') ||

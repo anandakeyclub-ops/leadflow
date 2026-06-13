@@ -55,7 +55,13 @@ def make_driver(visible=False):
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    opts.add_argument("--disable-popup-blocking")
+    opts.add_argument("--disable-extensions")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option("prefs", {
+        "profile.default_content_setting_values.popups": 1,
+        "profile.default_content_settings.popups": 1,
+    })
     opts.add_experimental_option("useAutomationExtension", False)
     # Enable logging to capture network requests
     caps = DesiredCapabilities.CHROME.copy()
@@ -73,7 +79,97 @@ def save_debug(driver, label):
     except Exception:
         pass
 
+def scrape_requests(start: date, end: date) -> List[dict]:
+    """
+    Use requests to POST directly to Volusia search form.
+    Bypasses the popup/new-window issue entirely.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
+        "Referer": SEARCH_URL,
+    })
+
+    start_str = start.strftime("%m/%d/%Y")
+    end_str   = end.strftime("%m/%d/%Y")
+
+    # Step 1: GET the search page to get ASP.NET viewstate tokens
+    r = session.get(SEARCH_URL, timeout=15)
+    soup = BeautifulSoup(r.text, "lxml")
+
+    # Extract hidden form fields
+    form_data = {}
+    for inp in soup.find_all("input", type="hidden"):
+        if inp.get("name") and inp.get("value"):
+            form_data[inp["name"]] = inp["value"]
+
+    print(f"  Form fields: {list(form_data.keys())[:8]}")
+
+    # Step 2: POST with search criteria
+    form_data.update({
+        "__EVENTTARGET":   "ctl00$ContentPlaceHolder1$search",
+        "__EVENTARGUMENT": "",
+        "ctl00$ContentPlaceHolder1$fromDate":  start_str,
+        "ctl00$ContentPlaceHolder1$toDate":    end_str,
+        "ctl00$ContentPlaceHolder1$doctype":   "LIEN",
+        "ctl00$ContentPlaceHolder1$rows":      "500",
+    })
+
+    r2 = session.post(SEARCH_URL, data=form_data, timeout=30,
+                      allow_redirects=True)
+    print(f"  POST status: {r2.status_code} URL: {r2.url}")
+    print(f"  Response size: {len(r2.text)} chars")
+
+    soup2 = BeautifulSoup(r2.text, "lxml")
+
+    # Find results table
+    all_rows = []
+    tables = soup2.find_all("table")
+    best_table = max(tables, key=lambda t: len(t.find_all("tr")), default=None)
+
+    if not best_table:
+        print(f"  No table found. Body: {soup2.get_text()[:200]!r}")
+        return []
+
+    headers = []
+    header_row = best_table.find("tr")
+    if header_row:
+        headers = [th.get_text(strip=True) for th in
+                   header_row.find_all(["th", "td"])]
+    print(f"  Headers: {headers[:8]}")
+
+    for row in best_table.find_all("tr")[1:]:
+        cells = row.find_all("td")
+        if len(cells) < 3:
+            continue
+        rec = {}
+        for i, cell in enumerate(cells):
+            key = headers[i] if i < len(headers) else f"col{i}"
+            rec[key] = cell.get_text(strip=True)
+        if any(v for v in rec.values()):
+            all_rows.append(rec)
+
+    print(f"  Rows found: {len(all_rows)}")
+    if all_rows:
+        print(f"  Sample: {dict(list(all_rows[0].items())[:4])}")
+    return all_rows
+
+
 def scrape(driver, start: date, end: date) -> List[dict]:
+    # Try requests approach first (avoids popup blocker)
+    try:
+        rows = scrape_requests(start, end)
+        if rows:
+            return rows
+        print("  Requests approach got 0 rows — trying browser")
+    except Exception as e:
+        print(f"  Requests error: {e} — trying browser")
+
     start_str = start.strftime("%m/%d/%Y")
     end_str   = end.strftime("%m/%d/%Y")
 
@@ -106,6 +202,35 @@ def scrape(driver, start: date, end: date) -> List[dict]:
             print(f"  Doc type: {opt.text!r}")
             break
 
+    # Set max records per page to highest available to avoid pagination
+    # (Volusia results expire on page navigation)
+    try:
+        rows_sel = driver.find_element(By.ID, "rows")
+        rows_obj = _Sel(rows_sel)
+        # Try to select maximum rows (999, 500, 200, 100)
+        for max_val in ["999", "500", "250", "200", "100"]:
+            try:
+                rows_obj.select_by_value(max_val)
+                print(f"  Max rows set to: {max_val}")
+                break
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Also try setting rows via name attribute
+    try:
+        rows_sel2 = driver.find_element(By.NAME, "rows")
+        rows_obj2 = _Sel(rows_sel2)
+        for max_val in ["999", "500", "200", "100"]:
+            try:
+                rows_obj2.select_by_value(max_val)
+                break
+            except Exception:
+                continue
+    except Exception:
+        pass
+
     # Verify values
     vals = driver.execute_script("""
         return {
@@ -116,36 +241,70 @@ def scrape(driver, start: date, end: date) -> List[dict]:
     """)
     print(f"  Values: from={vals['from']} to={vals['to']} doc={vals['doc']}")
 
-    # Override form target AND submit
+    # Intercept window.open and force same-window navigation BEFORE submit
     result = driver.execute_script("""
-        // Find the form and force target to _self
-        var forms = document.querySelectorAll('form');
-        var formTarget = 'unknown';
-        forms.forEach(function(f) {
-            formTarget = f.target || 'none';
-            f.target = '_self';
-            f.removeAttribute('target');
-        });
-
-        // Also override window.open as backup
-        window.open = function(url, t, f) {
-            window._lastOpenUrl = url;
-            document.location.href = url;
-            return window;
+        // Override window.open to redirect in same window
+        var _origOpen = window.open;
+        window.open = function(url, name, features) {
+            if (url && url !== 'about:blank') {
+                window.location.href = url;
+                return window;
+            }
+            return _origOpen.apply(this, arguments);
         };
 
-        document.getElementById('__EVENTTARGET').value = 'ctl00$ContentPlaceHolder1$search';
-        document.getElementById('__EVENTARGUMENT').value = '';
+        // Force all forms to target _self
+        Array.from(document.forms).forEach(function(f) {
+            f.target = '_self';
+        });
+
+        // Set ASP.NET event fields
+        var et = document.getElementById('__EVENTTARGET');
+        var ea = document.getElementById('__EVENTARGUMENT');
+        if (et) et.value = 'ctl00$ContentPlaceHolder1$search';
+        if (ea) ea.value = '';
 
         var form = document.forms[0];
-        return {formTarget: formTarget, formAction: form ? form.action : 'none',
-                fields: form ? form.elements.length : 0};
+        return {
+            formAction: form ? form.action : 'none',
+            formTarget: form ? (form.target || 'none') : 'none',
+            fields: form ? form.elements.length : 0
+        };
     """)
     print(f"  Form info: {result}")
 
-    # Submit
-    driver.execute_script("document.forms[0].submit();")
-    time.sleep(8)
+    # Try clicking the Search button directly instead of form.submit()
+    submitted = False
+    for by, sel in [
+        (By.CSS_SELECTOR, "input[type='submit']"),
+        (By.CSS_SELECTOR, "button[type='submit']"),
+        (By.XPATH, "//input[@value='Search' or @value='Submit']"),
+        (By.XPATH, "//button[contains(text(),'Search')]"),
+    ]:
+        try:
+            btn = driver.find_element(by, sel)
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                submitted = True
+                print(f"  Clicked submit via {sel}")
+                break
+        except Exception:
+            continue
+
+    if not submitted:
+        driver.execute_script("document.forms[0].submit();")
+        print("  Submitted via form.submit()")
+
+    # Wait and check for new windows
+    time.sleep(3)
+    handles_after = set(driver.window_handles)
+    if len(handles_after) > 1:
+        new_handle = [h for h in handles_after if h != driver.current_window_handle]
+        if new_handle:
+            driver.switch_to.window(new_handle[0])
+            print(f"  Switched to new window")
+    
+    time.sleep(3)
     print(f"  After submit URL: {driver.current_url}")
     save_debug(driver, "after_submit")
 
@@ -205,8 +364,18 @@ def scrape(driver, start: date, end: date) -> List[dict]:
             nxt = driver.find_element(By.XPATH,
                 "//a[normalize-space(text())='next' or normalize-space(text())='Next']")
             if 'disabled' in (nxt.get_attribute('class') or '').lower(): break
+            # Check if page expired before clicking next
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+            if "expired" in page_text.lower() or "session" in page_text.lower():
+                print(f"  Page expired — stopping pagination")
+                break
             driver.execute_script("arguments[0].click();", nxt)
-            time.sleep(2); page += 1
+            time.sleep(3); page += 1
+            # Check again after click
+            page_text2 = driver.find_element(By.TAG_NAME, "body").text
+            if "expired" in page_text2.lower() or len(page_text2) < 200:
+                print(f"  Page expired after click — stopping")
+                break
         except Exception: break
     return all_rows
 

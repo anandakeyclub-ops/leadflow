@@ -301,14 +301,48 @@ def search_doc_type(driver, doc_type: str, checkbox_id: str,
             continue
 
     if not clicked_nav:
-        # Call JS function directly — confirmed safe, goes to /search not /search/index
-        try:
-            driver.execute_script("LaunchDisclaimer('searchCriteriaDocuments');")
+        # Dump all JS functions and nav links for debugging
+        js_info = driver.execute_script("""
+            var fns = Object.keys(window).filter(function(k) {
+                return typeof window[k] === 'function' &&
+                       (k.toLowerCase().includes('launch') ||
+                        k.toLowerCase().includes('search') ||
+                        k.toLowerCase().includes('nav') ||
+                        k.toLowerCase().includes('disclaimer'));
+            });
+            var links = Array.from(document.querySelectorAll('a[onclick], a[href]'))
+                .filter(function(a) { return a.offsetParent !== null; })
+                .map(function(a) {
+                    return {text:(a.innerText||'').trim().substring(0,20),
+                            onclick:(a.getAttribute('onclick')||'').substring(0,60),
+                            href:(a.href||'').substring(0,60)};
+                }).slice(0, 15);
+            return {fns: fns, links: links};
+        """)
+        print(f"  JS funcs: {js_info.get('fns', [])}")
+        print(f"  Nav links: {js_info.get('links', [])[:8]}")
+
+        # Try multiple JS function names
+        for fn in ["LaunchDisclaimer('searchCriteriaDocuments')",
+                   "LaunchDisclaimerFromMenu('searchCriteriaDocuments')",
+                   "GoToSearch('searchCriteriaDocuments')",
+                   "NavigateTo('searchCriteriaDocuments')"]:
+            try:
+                driver.execute_script(fn)
+                clicked_nav = True
+                time.sleep(4)
+                print(f"  Navigated via {fn[:50]}")
+                break
+            except Exception:
+                continue
+
+        if not clicked_nav:
+            # Try direct URL navigation to doc type search
+            base = driver.current_url.split('/LandMarkWeb')[0]
+            driver.get(f"{base}/LandMarkWeb/search/index?theme=.blue&section=searchCriteriaDocumentType")
+            time.sleep(3)
             clicked_nav = True
-            time.sleep(4)
-            print("  Navigated via LaunchDisclaimer JS")
-        except Exception as e:
-            print(f"  LaunchDisclaimer failed: {e}")
+            print(f"  Navigated directly to doc type search URL")
 
     print(f"  Page after nav: {driver.current_url}")
 
@@ -411,13 +445,32 @@ def search_doc_type(driver, doc_type: str, checkbox_id: str,
                 continue
 
     if not submitted:
-        # Print all visible buttons for debugging
+        # Lee uses FontAwesome icon button with class btn-search
+        for by, sel in [
+            (By.CSS_SELECTOR, ".btn-search"),
+            (By.CSS_SELECTOR, "input.btn-search"),
+            (By.CSS_SELECTOR, "button.btn-search"),
+            (By.XPATH, "//input[contains(@class,'btn-search')]"),
+            (By.XPATH, "//button[contains(@class,'btn-search')]"),
+        ]:
+            try:
+                el = driver.find_element(by, sel)
+                if el.is_displayed():
+                    driver.execute_script("arguments[0].click();", el)
+                    submitted = True
+                    print(f"  Clicked submit via {sel}")
+                    break
+            except Exception:
+                continue
+
+    if not submitted:
         print("  No submit found — visible buttons on page:")
-        for el in driver.find_elements(By.XPATH, "//input[@type='submit'] | //button"):
+        for el in driver.find_elements(By.XPATH,
+                "//input[@type='submit'] | //button | //input[@type='button']"):
             try:
                 if el.is_displayed():
-                    print(f"    {el.tag_name} value={el.get_attribute('value')!r} "
-                          f"text={el.text.strip()!r} class={el.get_attribute('class')!r}")
+                    print(f"    {el.tag_name} val={el.get_attribute('value')!r} "
+                          f"cls={el.get_attribute('class')!r}")
             except Exception:
                 pass
         return []

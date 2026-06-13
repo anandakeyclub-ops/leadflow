@@ -39,9 +39,9 @@ CREDS_PATH = BASE_DIR / "data" / "credentials" / "gmail_credentials.json"
 TOKEN_PATH = BASE_DIR / "data" / "credentials" / "gmail_token.json"
 
 # Tracking server base URL — update when you deploy the tracker
-TRACKING_BASE = os.getenv("TRACKING_BASE_URL", "https://track.yourleadflow.com")
+TRACKING_BASE = os.getenv("TRACKING_BASE_URL", "https://taxcasereview.org")
 SENDER_EMAIL  = os.getenv("GMAIL_SENDER", "")
-SENDER_NAME   = os.getenv("GMAIL_SENDER_NAME", "Dana")
+SENDER_NAME   = os.getenv("GMAIL_SENDER_NAME", "Romy")
 MIN_LEAD_SCORE = int(os.getenv("MIN_LEAD_SCORE", "40"))
 DAILY_LIMIT    = int(os.getenv("DAILY_EMAIL_LIMIT", "100"))
 
@@ -96,7 +96,7 @@ def build_email_html(
     first_name = (to_name or debtor_name or "").split()[0].title() or "there"
 
     # UTM tracking links
-    cta_url_raw = "https://yourleadflow.com/tax-review?utm_source=email&utm_campaign=lien_outreach"
+    cta_url_raw = "https://taxcasereview.org?utm_source=email&utm_campaign=lien_outreach"
     cta_url     = f"{TRACKING_BASE}/track/click/{tracking_id}?url={cta_url_raw}"
     pixel_url   = f"{TRACKING_BASE}/track/open/{tracking_id}.gif"
 
@@ -189,35 +189,37 @@ Best,
 # ---------------------------------------------------------------------------
 
 def get_leads_to_contact(cur, limit: int, campaign_id: str) -> list:
-    """Get enriched leads not yet emailed in this campaign."""
+    """Get enriched leads from lien_dbpr_contacts not yet emailed."""
     cur.execute("""
         SELECT
-            ml.id              AS lead_id,
-            ml.county_id,
+            d.id               AS lead_id,
+            nl.county_id,
             c.county_name,
-            ct.email,
-            ct.full_name,
+            d.email,
+            d.full_name,
             nl.debtor_name,
-            nl.filing_type     AS lien_type,
+            nl.lien_type,
             nl.amount          AS lien_amount,
             nl.filed_date,
-            ml.lead_score,
-            ml.match_score
-        FROM matched_leads ml
-        JOIN counties          c  ON ml.county_id = c.id
-        JOIN normalized_liens  nl ON ml.lien_id   = nl.id
-        JOIN contacts          ct ON ml.id         = ct.lead_id
-        WHERE ct.email IS NOT NULL
-          AND ct.email NOT LIKE '%%leadflow.invalid'
-          AND ct.email NOT LIKE '%%noemail%%'
-          AND ml.lead_score >= %s
+            d.dbpr_score       AS lead_score,
+            d.dbpr_score       AS match_score
+        FROM lien_dbpr_contacts d
+        JOIN normalized_liens nl ON nl.id = d.lien_id
+        JOIN counties c ON c.id = nl.county_id
+        WHERE d.email IS NOT NULL
+          AND d.email NOT LIKE '%%leadflow.invalid'
+          AND d.email NOT LIKE '%%noemail%%'
+          AND d.email LIKE '%%@%%'
           AND NOT EXISTS (
               SELECT 1 FROM email_sends es
-              WHERE es.lead_id = ml.id AND es.campaign_id = %s
+              WHERE es.lead_id = d.id AND es.campaign_id = %s
           )
-        ORDER BY ml.lead_score DESC, ml.match_score DESC
+        GROUP BY d.id, nl.county_id, c.county_name, d.email,
+                 d.full_name, nl.debtor_name, nl.lien_type,
+                 nl.amount, nl.filed_date, d.dbpr_score
+        ORDER BY d.dbpr_score DESC, nl.filed_date DESC
         LIMIT %s
-    """, (MIN_LEAD_SCORE, campaign_id, limit))
+    """, (campaign_id, limit))
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -239,16 +241,34 @@ def record_send(cur, lead: dict, tracking_id: str, subject: str,
     ))
 
     if status == "sent":
-        cur.execute("""
-            UPDATE matched_leads
-            SET lead_status = 'contacted', updated_at = NOW()
-            WHERE id = %s
-        """, (lead["lead_id"],))
+        pass  # lien_dbpr_contacts does not need status update
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def ensure_email_sends_table(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS email_sends (
+            id          SERIAL PRIMARY KEY,
+            lead_id     INTEGER,
+            campaign_id TEXT,
+            to_email    TEXT,
+            to_name     TEXT,
+            subject     TEXT,
+            tracking_id UUID UNIQUE,
+            sent_at     TIMESTAMPTZ DEFAULT NOW(),
+            status      TEXT,
+            error_message TEXT,
+            county_name TEXT,
+            lien_type   TEXT,
+            lien_amount NUMERIC
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_email_sends_lead ON email_sends(lead_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_email_sends_campaign ON email_sends(campaign_id)")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -265,6 +285,9 @@ def main():
         service = get_gmail_service()
 
     conn = get_connection()
+    with conn.cursor() as cur:
+        ensure_email_sends_table(cur)
+    conn.commit()
     sent = failed = skipped = 0
 
     try:

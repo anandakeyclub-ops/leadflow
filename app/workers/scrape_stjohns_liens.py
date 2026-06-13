@@ -199,20 +199,42 @@ def load_and_accept(driver) -> bool:
         print("  NOTE: Set STJOHNS_USERNAME/PASSWORD in .env to bypass reCAPTCHA")
 
     # Click Document Type Search tab
-    time.sleep(1)
-    try:
-        tab = driver.find_element(By.ID, "searchCriteriaDocuments-tab")
-        driver.execute_script("arguments[0].click();", tab)
-        time.sleep(2)
-        print(f"  Clicked Document Type Search tab")
-    except Exception:
+    time.sleep(2)
+
+    # Dump all tabs to find correct ID for St. Johns
+    tabs = driver.execute_script("""
+        var tabs = [];
+        document.querySelectorAll('a[id], li[id], a[href]').forEach(function(el) {
+            var txt = (el.innerText||'').trim();
+            if (txt.length > 1 && txt.length < 50) {
+                tabs.push({id:el.id, text:txt,
+                           href:(el.getAttribute('href')||'').substring(0,40)});
+            }
+        });
+        return tabs.slice(0,15);
+    """)
+    print(f"  Page tabs: {tabs}")
+
+    tab_clicked = False
+    for by, sel in [
+        (By.ID,    "searchCriteriaDocuments-tab"),
+        (By.ID,    "searchCriteriaDocumentType-tab"),
+        (By.XPATH, "//a[contains(text(),'Document Type')]"),
+        (By.XPATH, "//a[contains(text(),'Document')]"),
+        (By.XPATH, "//li[@role='tab']//a"),
+    ]:
         try:
-            tab = driver.find_element(By.XPATH,
-                "//a[contains(text(),'Document Type')]")
+            tab = driver.find_element(by, sel)
             driver.execute_script("arguments[0].click();", tab)
             time.sleep(2)
-        except Exception as e:
-            print(f"  Could not click Document Type tab: {e}")
+            print(f"  Clicked tab via {sel}")
+            tab_clicked = True
+            break
+        except Exception:
+            continue
+
+    if not tab_clicked:
+        print("  Could not click Document Type tab")
 
     return True
 

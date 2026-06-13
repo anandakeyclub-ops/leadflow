@@ -413,7 +413,7 @@ def main():
                 "AND nl.id NOT IN (SELECT normalized_lien_id FROM lien_contact_enrichment)"
             no_dbpr = """
                 AND nl.id NOT IN (
-                    SELECT normalized_lien_id FROM lien_dbpr_contacts
+                    SELECT lien_id FROM lien_dbpr_contacts
                     WHERE email IS NOT NULL
                 )
             """

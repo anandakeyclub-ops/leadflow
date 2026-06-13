@@ -231,7 +231,7 @@ def main():
             # Also skip liens already matched by DBPR
             dbpr_done = """
                 AND nl.id NOT IN (
-                    SELECT normalized_lien_id FROM lien_dbpr_contacts
+                    SELECT lien_id FROM lien_dbpr_contacts
                     WHERE email IS NOT NULL
                 )
             """ if not args.force else ""

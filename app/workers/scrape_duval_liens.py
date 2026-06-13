@@ -675,86 +675,23 @@ DOC_VIEWER_BASE = "https://officialrecords.duvalclerk.gov"
 
 def download_pdf_pinellas(driver, rec: LienRecord) -> Optional[str]:
     """
-    Download the lien document PDF from the Duval public portal.
-    Navigate to instrument number search, then print page to PDF.
-    Saves to PDF_DIR / duval_{instrument}.pdf
+    Download Duval lien PDF via search form → result click → printToPDF.
+    Duval portal is a SPA — direct URLs return HTML not PDF.
+    Must: accept disclaimer → type instrument # → search → click row → print PDF.
     """
-    instrument = re.sub(r"[^\w\-]", "_", rec.instrument_number)[:40]
-    pdf_path   = PDF_DIR / f"duval_{instrument}.pdf"
-
-    if pdf_path.exists() and pdf_path.stat().st_size > 500:
-        return str(pdf_path)
-
-    # Duval document URLs confirmed from portal
-    # Duval document viewer confirmed URL patterns
-    # The instrument number search page then allows viewing the document
-    import urllib.parse
-    urls = [
-        # Direct instrument search — loads the document viewer
-        f"https://or.duvalclerk.com/search/SearchTypeInstrumentNumber?Length=4&inst={urllib.parse.quote(rec.instrument_number)}",
-        f"https://or.duvalclerk.com/search/SearchTypeInstrumentNumber?instrumentNumber={urllib.parse.quote(rec.instrument_number)}",
-        # Image viewer — Duval stores images at this path
-        f"https://or.duvalclerk.com/Document/GetDocumentImage?instrumentNumber={urllib.parse.quote(rec.instrument_number)}&pageNumber=1",
-        f"https://or.duvalclerk.com/Search/ViewDocument?instrumentNumber={urllib.parse.quote(rec.instrument_number)}",
-    ]
-
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
 
-    # Duval is a SPA — URL stays the same after clicking a result.
-    # Must: load page → accept disclaimer → type instrument # → search → click result row
-    import requests as _req
-    _session = _req.Session()
-    _session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+    instrument = re.sub(r"[^\w\-]", "_", rec.instrument_number)[:40]
+    pdf_path   = PDF_DIR / f"duval_{instrument}.pdf"
 
-    # Sync browser cookies to requests session
-    try:
-        for c in driver.get_cookies():
-            _session.cookies.set(c["name"], c["value"])
-    except Exception:
-        pass
+    if pdf_path.exists() and pdf_path.stat().st_size > 5000:
+        return str(pdf_path)
 
     base = "https://or.duvalclerk.com"
-    urls_to_try = [
-        f"{base}/Document/MultipleView?instrumentNumber={rec.instrument_number}",
-        f"{base}/Document/GetDocumentByInstrumentNumber/O/{rec.instrument_number}",
-        f"{base}/Document/GetDocument?instrumentNumber={rec.instrument_number}",
-        f"{base}/Document/Download?instrumentNumber={rec.instrument_number}",
-        f"{base}/Document/ViewImage?instrumentNumber={rec.instrument_number}",
-    ]
 
-    # First navigate to disclaimer page and accept it to get session cookies
     try:
-        driver.get(f"{base}/search/SearchTypeInstrumentNumber")
-        time.sleep(3)
-        try:
-            btn = driver.find_element(By.ID, "btnButton")
-            driver.execute_script("arguments[0].click();", btn)
-            time.sleep(2)
-            # Re-sync cookies after disclaimer accept
-            for c in driver.get_cookies():
-                _session.cookies.set(c["name"], c["value"])
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-    # Try each URL with requests session (cookies synced from browser)
-    for url in urls_to_try:
-        try:
-            r = _session.get(url, timeout=20, stream=True, allow_redirects=True)
-            ct = (r.headers.get("content-type") or "").lower()
-            content = r.content
-            print(f"    {url[-60:]}: {r.status_code} {ct[:30]} {len(content)}b")
-            if len(content) > 5000 and (b"%PDF" in content[:50] or "pdf" in ct or "octet-stream" in ct):
-                pdf_path.write_bytes(content)
-                return str(pdf_path)
-        except Exception as e:
-            print(f"    URL error: {e}")
-            continue
-
-    # Fallback: navigate browser to document page + printToPDF
-    try:
+        # Step 1: Load search page and accept disclaimer
         driver.get(f"{base}/search/SearchTypeInstrumentNumber")
         time.sleep(3)
         try:
@@ -764,201 +701,98 @@ def download_pdf_pinellas(driver, rec: LienRecord) -> Optional[str]:
         except Exception:
             pass
 
-        # Type instrument number and search
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
+        # Step 2: Wait for search input to appear
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR,
                     "input[type='text'], input[type='search']")))
         except Exception:
             pass
+        time.sleep(1)
 
+        # Step 3: Find and fill search input
         input_el = None
-        for css in ["input[type='text']:not([type='submit'])",
+        for css in ["input[type='text']:not([type='submit']):not([type='button'])",
                     "input[type='search']", "#InstrumentNumber"]:
             try:
                 els = driver.find_elements(By.CSS_SELECTOR, css)
                 for el in els:
-                    if el.is_enabled() and el.get_attribute("type") not in ("submit","button","hidden"):
-                        input_el = el; break
+                    t = (el.get_attribute("type") or "text").lower()
+                    if t not in ("submit","button","hidden","checkbox","radio"):
+                        if el.is_enabled():
+                            input_el = el; break
                 if input_el: break
             except Exception:
                 pass
 
-        if input_el:
-            input_el.clear()
-            input_el.send_keys(rec.instrument_number)
-            time.sleep(0.5)
-            for sel in [(By.ID,"btnSearch"),
-                        (By.CSS_SELECTOR,"button[type='submit']"),
-                        (By.XPATH,"//button[contains(text(),'Search')]")]:
-                try:
-                    b = driver.find_element(*sel)
-                    if b.is_displayed():
-                        driver.execute_script("arguments[0].click();", b); break
-                except Exception:
-                    pass
-            time.sleep(5)
-
-            # Click first result row
-            for css in ["tr.k-master-row a", "tr.k-master-row", "table tbody tr a", "table tbody tr"]:
-                try:
-                    els = driver.find_elements(By.CSS_SELECTOR, css)
-                    for el in els:
-                        if rec.instrument_number in el.text or css.endswith("a"):
-                            driver.execute_script("arguments[0].click();", el)
-                            time.sleep(6)
-                            break
-                    break
-                except Exception:
-                    pass
-
-            body = driver.find_element(By.TAG_NAME, "body").text
-            print(f"    Fallback page: {len(body)}chars {body[:80]!r}")
-            if len(body) > 500 and "Login" not in body[:200]:
-                pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
-                    "printBackground": True, "paperWidth": 8.5, "paperHeight": 11})
-                if pdf_data and pdf_data.get("data"):
-                    pdf_path.write_bytes(base64.b64decode(pdf_data["data"]))
-                    if pdf_path.stat().st_size > 5000:
-                        return str(pdf_path)
-                    pdf_path.unlink(missing_ok=True)
-
-        # Dump ALL inputs to find the right one
-        all_inputs = driver.execute_script("""
-            return Array.from(document.querySelectorAll('input')).map(function(el) {
-                return {id:el.id, name:el.name, ph:el.placeholder,
-                        type:el.type, cls:el.className.substring(0,40)};
-            });
-        """)
-
-        # Fill instrument number field
-        input_el = None
-        for css in [
-            "input[placeholder*='nstrument']",
-            "input[name*='nstrument']",
-            "input[id*='nstrument']",
-            "#InstrumentNumber",
-            "#instrumentNumber",
-            "input[type='search']",
-            "input[type='text']:not([readonly])",
-        ]:
-            try:
-                els = driver.find_elements(By.CSS_SELECTOR, css)
-                for el in els:
-                    t = el.get_attribute("type") or "text"
-                    if t not in ("submit", "button", "hidden", "checkbox", "radio"):
-                        driver.execute_script("arguments[0].style.display='block';", el)
-                        if el.is_enabled():
-                            input_el = el
-                            break
-                if input_el:
-                    break
-            except Exception:
-                continue
-
         if not input_el:
-            print(f"    No instrument search field found. All inputs: {all_inputs[:6]}")
-            print(f"    Page: {driver.title!r}")
+            all_inp = driver.execute_script("""
+                return Array.from(document.querySelectorAll('input'))
+                    .map(i=>({id:i.id,type:i.type,ph:i.placeholder}));
+            """)
+            print(f"    No input found. All inputs: {all_inp[:5]}")
             return None
 
         input_el.clear()
         input_el.send_keys(rec.instrument_number)
         time.sleep(0.5)
 
-        # Click Search
-        for selector in [
-            (By.ID,   "btnSearch"),
-            (By.CSS_SELECTOR, "button[type='submit']"),
-            (By.XPATH, "//button[contains(text(),'Search')]"),
-        ]:
+        # Step 4: Click Search
+        for sel in [(By.ID, "btnSearch"),
+                    (By.CSS_SELECTOR, "button[type='submit']"),
+                    (By.XPATH, "//button[contains(text(),'Search')]"),
+                    (By.XPATH, "//input[@value='Search']")]:
             try:
-                btn = driver.find_element(*selector)
-                if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
+                b = driver.find_element(*sel)
+                if b.is_displayed():
+                    driver.execute_script("arguments[0].click();", b)
                     break
             except Exception:
-                continue
+                pass
+        time.sleep(5)
 
-        time.sleep(4)
-
-        # Click the result row containing our instrument number
+        # Step 5: Click first result row or link
         clicked = False
-        for css in ["tr.k-master-row", "tr.k-alt.k-master-row", "table tbody tr"]:
-            rows = driver.find_elements(By.CSS_SELECTOR, css)
-            for row in rows:
-                if rec.instrument_number in row.text:
-                    # Look for a direct link inside the row first
-                    links = row.find_elements(By.CSS_SELECTOR, "a[href]")
-                    if links:
-                        driver.execute_script("arguments[0].click();", links[0])
-                    else:
-                        driver.execute_script("arguments[0].click();", row)
-                    clicked = True
-                    break
-            if clicked:
-                break
-
-        # If no row matched by text, click first data row link
-        if not clicked:
+        for css in ["tr.k-master-row a", "tr.k-master-row",
+                    "table tbody tr a", "table tbody tr td a"]:
             try:
-                first = driver.find_element(By.CSS_SELECTOR, "tr.k-master-row a, tr.k-master-row")
-                driver.execute_script("arguments[0].click();", first)
-                clicked = True
+                els = driver.find_elements(By.CSS_SELECTOR, css)
+                for el in els:
+                    txt = el.text.strip()
+                    if rec.instrument_number in txt or txt in ("View","") or not txt:
+                        driver.execute_script("arguments[0].click();", el)
+                        clicked = True
+                        time.sleep(6)
+                        break
+                if clicked: break
             except Exception:
                 pass
 
         if not clicked:
-            print(f"    No result row found for {rec.instrument_number}")
+            print(f"    No result row to click")
             return None
 
-        time.sleep(5)
-
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        print(f"    Page after click ({len(body_text)} chars): {body_text[:120]!r}")
-
-        # If still on search/nav page, look for document viewer link to click
-        if len(body_text) < 500 or "Login" in body_text[:200]:
-            # Try clicking any document/image link on the page
-            doc_links = driver.find_elements(By.XPATH,
-                "//a[contains(@href,'Document') or contains(@href,'Image') or "
-                "contains(@href,'document') or contains(@href,'image')]")
-            if doc_links:
-                driver.execute_script("arguments[0].click();", doc_links[0])
-                time.sleep(5)
-                body_text = driver.find_element(By.TAG_NAME, "body").text
-                print(f"    After doc link click: {body_text[:120]!r}")
-            else:
-                # Dump all links on page for debugging
-                all_links = driver.execute_script("""
-                    return Array.from(document.querySelectorAll('a[href]'))
-                        .map(a => ({text: a.innerText.trim().substring(0,30),
-                                    href: a.href.substring(0,80)}))
-                        .slice(0, 10);
-                """)
-                print(f"    Links on page: {all_links}")
+        # Step 6: Check page and print to PDF
+        body = driver.find_element(By.TAG_NAME, "body").text
+        if len(body) < 500 or "Login" in body[:200]:
+            print(f"    Document not loaded ({len(body)} chars)")
+            return None
 
         pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
             "printBackground": True,
             "paperWidth":  8.5,
             "paperHeight": 11,
-            "marginTop":   0.4,
-            "marginBottom":0.4,
         })
         if pdf_data and pdf_data.get("data"):
             pdf_path.write_bytes(base64.b64decode(pdf_data["data"]))
             size = pdf_path.stat().st_size
-            print(f"    PDF size: {size:,} bytes")
             if size > 5000:
                 return str(pdf_path)
-            else:
-                print(f"    PDF too small — document may not have loaded")
-                pdf_path.unlink(missing_ok=True)
+            pdf_path.unlink(missing_ok=True)
+            print(f"    PDF too small: {size}b")
 
     except Exception as e:
-        print(f"    PDF error: {e}")
-        import traceback; traceback.print_exc()
+        print(f"    Error: {e}")
 
     return None
 
