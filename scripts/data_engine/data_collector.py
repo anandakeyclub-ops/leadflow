@@ -1117,14 +1117,17 @@ def show_collection_stats() -> None:
             """)
             in_pipe = {_state_label(r[0]): r[1] for r in cur.fetchall()}
 
-            # Email pipeline lag = matched + email + email_step=0 not yet synced.
+            # Addressable = matched contacts with a deliverable email that have
+            # not yet entered the sequence (email_step=0), excluding spam traps
+            # and unsubscribes.
             cur.execute("""
                 SELECT COALESCE(NULLIF(nc.state,''),'UNKNOWN') AS st, COUNT(*)
                 FROM normalized_contacts nc
-                WHERE nc.has_lien_match AND nc.email IS NOT NULL AND nc.email <> ''
+                WHERE nc.has_lien_match = TRUE
+                  AND nc.email IS NOT NULL AND nc.email <> ''
                   AND nc.email_step = 0
-                  AND NOT EXISTS (SELECT 1 FROM lien_dbpr_contacts ldc
-                                  WHERE LOWER(ldc.email) = LOWER(nc.email))
+                  AND nc.is_spam_trap = FALSE
+                  AND nc.unsubscribed = FALSE
                 GROUP BY 1
             """)
             lag = {r[0]: r[1] for r in cur.fetchall()}
@@ -1161,7 +1164,7 @@ def show_collection_stats() -> None:
                   f"{last_run.get(st,'—'):<10}")
         print(f"  {'-'*104}")
         print(f"  Total addressable: {total_addressable:,} matched contacts "
-              f"with email not yet in pipeline")
+              f"with email, not yet sequenced (email_step=0)")
         if liens.get("UNKNOWN"):
             print(f"  ⚠ {liens['UNKNOWN']:,} liens have UNKNOWN (NULL/empty) state "
                   f"— backfill state from county/data_source.")
