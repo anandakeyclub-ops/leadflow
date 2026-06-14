@@ -198,6 +198,7 @@ def print_history(days: int = 7):
             if "step2_sent"   in m: parts.append(f"E2:{m['step2_sent']}")
             if "step3_sent"   in m: parts.append(f"E3:{m['step3_sent']}")
             if "post_type"    in m: parts.append(m["post_type"])
+            if "recipients"   in m: parts.append(f"sent:{m['recipients']}")
             if "blog_slug"    in m: parts.append(f"blog:{m['blog_slug'][:20]}")
             if "liens_scraped" in m: parts.append(f"{m['liens_scraped']} liens")
             summary = " | ".join(parts) if parts else ""

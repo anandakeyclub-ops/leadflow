@@ -1260,8 +1260,32 @@ def main():
         return
 
     recipients = [r.strip() for r in args.to.split(",")] if args.to else RECIPIENTS
-    send_summary(subject, html, recipients)
-    print(f"  ✅ Sent to: {', '.join(recipients)}")
+
+    # Pipeline log so "did the summary send today?" is answerable from
+    # logs/pipeline/ (python pipeline_log.py --today) without opening Task
+    # Scheduler. Same pattern as send_email_sequence / weekly_scrape.
+    from pipeline_log import PipelineLogger
+    logger = PipelineLogger("daily_summary")
+    logger.start()
+    logger.step_start("send_summary")
+    try:
+        send_summary(subject, html, recipients)
+        logger.step_done("send_summary", ok=True,
+                         detail=f"sent to {len(recipients)} recipient(s)")
+        print(f"  ✅ Sent to: {', '.join(recipients)}")
+        logger.finish({
+            "recipients":  len(recipients),
+            "to":          ",".join(recipients),
+            "subject":     subject,
+            "sent_24h":    seq.get("sent_24h", 0),
+            "email_ready": lead.get("email_ready", 0),
+            "liens_total": lead.get("liens_total", 0),
+            "paid_reviews": conv.get("total", 0),
+        })
+    except Exception as e:
+        logger.step_done("send_summary", ok=False, error=str(e))
+        logger.finish({"error": str(e)})
+        raise
 
 
 if __name__ == "__main__":
