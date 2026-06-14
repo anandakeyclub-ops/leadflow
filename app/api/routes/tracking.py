@@ -2,7 +2,9 @@
 app/api/routes/tracking.py
 ==========================
 Email open tracking pixel.
-GET /t/o/{token}.gif — records open in email_opens, returns 1x1 transparent GIF.
+GET /t/o/{token} (also accepts a trailing ".gif") — records open in email_opens,
+returns a 1x1 transparent GIF. Never 404s: unknown/invalid tracking_id still
+returns the pixel silently.
 
 The tracking_id in the URL matches email_sends.tracking_id (UUID).
 """
@@ -23,13 +25,17 @@ PIXEL_GIF = (
     b"\x3b"
 )
 
-@router.get("/o/{token}.gif")
+@router.get("/o/{token}")
 def email_open_pixel(token: str, request: Request):
     """
     Called when recipient opens the email (image loads).
     Inserts a row into email_opens and updates email_sends.opened_at.
     Always returns the pixel — never 404 (broken image = bad UX).
+    Accepts both /t/o/{id} and the conventional /t/o/{id}.gif pixel URL.
     """
+    if token.lower().endswith(".gif"):
+        token = token[:-4]
+
     user_agent    = request.headers.get("user-agent", "")
     forwarded_for = request.headers.get("x-forwarded-for")
     client_ip     = (

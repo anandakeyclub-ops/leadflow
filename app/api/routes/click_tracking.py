@@ -8,7 +8,7 @@ The tracking_id in the URL matches email_sends.tracking_id (UUID).
 """
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
-from app.core.db import get_connection
+from app.core.db import get_connection, release_connection
 
 router = APIRouter()
 
@@ -30,6 +30,7 @@ def track_click(token: str, url: str = "", request: Request = None):
         else (request.client.host if request and request.client else None)
     )
 
+    conn = None
     try:
         conn = get_connection()
         with conn.cursor() as cur:
@@ -49,8 +50,11 @@ def track_click(token: str, url: str = "", request: Request = None):
             """, (token,))
 
         conn.commit()
-        conn.close()
     except Exception:
         pass  # Never fail — always redirect
+    finally:
+        # release_connection (NOT conn.close(), which leaks the pooled slot).
+        if conn is not None:
+            release_connection(conn)
 
     return RedirectResponse(url=destination, status_code=302)
