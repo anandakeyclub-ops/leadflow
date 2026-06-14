@@ -115,15 +115,40 @@ Register-ScheduledTask `
 
 Write-Host "  ✓ Export Contacts: Every Monday at 3:00 PM" -ForegroundColor Green
 
+# ── Weekly Intelligence Report — Every Sunday at 7:30 AM ─────────────────────
+# Generates + publishes the 10-state rotation intelligence report (one state per
+# week, Florida weekly). Sunday 7:30 AM matches the run pattern already in the
+# pipeline logs. No flags = generate + publish.
+$intelAction = New-ScheduledTaskAction `
+    -Execute $python `
+    -Argument "scripts/reports/weekly_intelligence.py" `
+    -WorkingDirectory $workdir
+
+$intelTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 7:30AM
+
+$intelSettings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
+    -RestartCount 1 `
+    -RestartInterval (New-TimeSpan -Minutes 30)
+
+Register-ScheduledTask `
+    -TaskName   "LeadFlow - Weekly Intelligence" `
+    -Action     $intelAction `
+    -Trigger    $intelTrigger `
+    -Settings   $intelSettings `
+    -RunLevel   Highest `
+    -Force | Out-Null
+
+Write-Host "  ✓ Weekly Intelligence: Every Sunday at 7:30 AM" -ForegroundColor Green
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 Write-Host "`n[LeadFlow] All tasks created successfully!" -ForegroundColor Cyan
 Write-Host "`n  Weekly schedule:"
+Write-Host "    Sunday  7:30 AM  - Weekly intelligence report (10-state rotation)"
 Write-Host "    Monday  7:00 AM  - Scrape all counties (Tue-Thu get fresh leads)"
 Write-Host "    Monday  1:00 PM  - DBPR enrichment"
 Write-Host "    Monday  3:00 PM  - Export contacts CSV"
-Write-Host "    Tuesday 8:00 AM  - Email sequence (100 emails)"
-Write-Host "    Wednesday 8:00 AM - Email sequence (100 emails)"
-Write-Host "    Thursday 8:00 AM  - Email sequence (100 emails)"
+Write-Host "    Email sequence 8:00 AM - Mon/Tue/Wed/Thu/Sat (limit 50/day)"
 Write-Host "`n  Palm Beach (manual CAPTCHA):"
 Write-Host "    Run whenever ready: python palm_beach_manual.py"
 Write-Host "`n  To verify tasks:"
