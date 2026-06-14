@@ -216,6 +216,19 @@ def main():
         show_status()
         return
 
+    # Pipeline log so the blog automation shows up in logs/pipeline/ like every
+    # other worker (the daily summary's Content Automation section reads this).
+    # Skipped for --dry-run (a dry run isn't a real publish).
+    logger = None
+    if not args.dry_run:
+        try:
+            sys.path.insert(0, str(BASE.parent.parent))  # repo root for pipeline_log
+            from pipeline_log import PipelineLogger
+            logger = PipelineLogger("blog")
+            logger.start()
+        except ImportError:
+            logger = None
+
     python  = sys.executable
     weekday = date.today().weekday()  # 0=Mon 6=Sun
     topic_days = {0, 2, 4}           # Mon Wed Fri
@@ -224,45 +237,75 @@ def main():
     # Sunday — skip
     if weekday == 6 and not args.topic and not args.state:
         print("Sunday — no blog scheduled.")
+        if logger:
+            logger.step_skip("publish_blog", "Sunday — no blog scheduled")
+            logger.finish({"published": False, "reason": "sunday"})
         return
 
     ok = False
+    published_slug = None
+    post_kind = None
 
-    if args.topic or (not args.state and weekday in topic_days):
-        # ── National topic post ───────────────────────────────────────
-        slug = get_next_topic_slug()
-        if not slug:
-            print("No unpublished topic slugs available")
-            return
+    try:
+        if args.topic or (not args.state and weekday in topic_days):
+            # ── National topic post ───────────────────────────────────────
+            slug = get_next_topic_slug()
+            if not slug:
+                print("No unpublished topic slugs available")
+                if logger:
+                    logger.step_skip("publish_blog", "no unpublished topic slugs")
+                    logger.finish({"published": False, "reason": "no_slugs"})
+                return
 
-        print(f"\n  Next topic slug: {slug}")
-        cmd = [python, "generate_topic_blogs.py", "--slug", slug]
-        if args.dry_run:
-            cmd.append("--dry-run")
+            post_kind = "national_topic"
+            print(f"\n  Next topic slug: {slug}")
+            cmd = [python, "generate_topic_blogs.py", "--slug", slug]
+            if args.dry_run:
+                cmd.append("--dry-run")
 
-        ok = run_cmd(cmd, f"National Topic Blog: {slug}", dry_run=args.dry_run)
-        if ok and not args.dry_run:
-            save_history(slug)
-            print(f"  Recorded: {slug} published {date.today().isoformat()}")
+            if logger: logger.step_start("publish_blog")
+            ok = run_cmd(cmd, f"National Topic Blog: {slug}", dry_run=args.dry_run)
+            if ok and not args.dry_run:
+                save_history(slug)
+                published_slug = slug
+                print(f"  Recorded: {slug} published {date.today().isoformat()}")
+            if logger:
+                logger.step_done("publish_blog", ok=ok, detail=f"topic:{slug}")
 
-    else:
-        # ── State post ────────────────────────────────────────────────
-        state = args.state or get_next_state_for_blog()
-        topic_suffix = get_next_state_topic(state)
-        state_slug   = state.replace("_", "-")
-        full_slug    = f"{state_slug}-{topic_suffix}"
+        else:
+            # ── State post ────────────────────────────────────────────────
+            state = args.state or get_next_state_for_blog()
+            topic_suffix = get_next_state_topic(state)
+            state_slug   = state.replace("_", "-")
+            full_slug    = f"{state_slug}-{topic_suffix}"
 
-        print(f"\n  Next state: {state.title()} | topic: {topic_suffix}")
-        cmd = [python, "generate_topic_blogs.py", "--slug", full_slug]
-        if args.dry_run:
-            cmd.append("--dry-run")
+            post_kind = "state"
+            print(f"\n  Next state: {state.title()} | topic: {topic_suffix}")
+            cmd = [python, "generate_topic_blogs.py", "--slug", full_slug]
+            if args.dry_run:
+                cmd.append("--dry-run")
 
-        ok = run_cmd(cmd, f"State Blog: {state.title()} — {topic_suffix}", dry_run=args.dry_run)
-        if ok and not args.dry_run:
-            save_history(full_slug)
-            print(f"  Recorded: {full_slug} published {date.today().isoformat()}")
+            if logger: logger.step_start("publish_blog")
+            ok = run_cmd(cmd, f"State Blog: {state.title()} — {topic_suffix}", dry_run=args.dry_run)
+            if ok and not args.dry_run:
+                save_history(full_slug)
+                published_slug = full_slug
+                print(f"  Recorded: {full_slug} published {date.today().isoformat()}")
+            if logger:
+                logger.step_done("publish_blog", ok=ok, detail=f"state:{full_slug}")
 
-    print(f"\n  Blog run complete: {'OK' if ok else 'FAILED'}")
+        print(f"\n  Blog run complete: {'OK' if ok else 'FAILED'}")
+        if logger:
+            logger.finish({
+                "published": bool(published_slug),
+                "slug":      published_slug or "",
+                "post_kind": post_kind,
+            })
+    except Exception as e:
+        if logger:
+            logger.step_done("publish_blog", ok=False, error=str(e))
+            logger.finish({"published": False, "error": str(e)})
+        raise
 
 
 if __name__ == "__main__":
