@@ -1077,7 +1077,7 @@ def build_weekly_calendar_section() -> str:
          lambda d: ran_ok(d, lambda t: t.startswith("reel_"))),
         ("📝 Blog post",     lambda wd: wd in (0, 1, 2, 3, 4, 5),                    # Mon-Sat
          lambda d: d.isoformat() in blog_dates),
-        ("📥 Data collection", lambda wd: True,                                      # daily 6:30 AM
+        ("📥 Data collection", lambda wd: wd != 6,                                   # Mon-Sat 6:30 AM (run_daily.py: Sun = rest)
          lambda d: ran_ok(d, lambda t: t.startswith("data_collection_"))),
         ("🛰️ Weekly intel",  lambda wd: wd == 6,                                     # Sun 7:30 AM
          lambda d: ran_ok(d, lambda t: t == "weekly_intelligence")),
