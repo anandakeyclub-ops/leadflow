@@ -7,7 +7,7 @@ GET /t/o/{token}.gif — records open in email_opens, returns 1x1 transparent GI
 The tracking_id in the URL matches email_sends.tracking_id (UUID).
 """
 from fastapi import APIRouter, Request, Response
-from app.core.db import get_connection
+from app.core.db import get_connection, release_connection
 
 router = APIRouter()
 
@@ -38,6 +38,7 @@ def email_open_pixel(token: str, request: Request):
         else (request.client.host if request.client else None)
     )
 
+    conn = None
     try:
         conn = get_connection()
         with conn.cursor() as cur:
@@ -67,9 +68,13 @@ def email_open_pixel(token: str, request: Request):
                 """, (token,))
 
         conn.commit()
-        conn.close()
     except Exception:
         pass  # Never fail — always return the pixel
+    finally:
+        # release_connection (NOT conn.close(), which leaks the pooled slot and
+        # exhausts the pool under sustained pixel traffic).
+        if conn is not None:
+            release_connection(conn)
 
     headers = {
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",

@@ -21,16 +21,17 @@ try:
 except Exception as e:
     print(f"Warning: bookings router not loaded: {e}")
 
-# Tracking
+# Tracking — mounted at /t so URLs match the email pixel/link generators
+# (open_pixel_url -> {base}/t/o/{id}.gif, tracked_link -> {base}/t/c/{id}).
 try:
     from app.api.routes.tracking import router as tracking_router
-    app.include_router(tracking_router)
+    app.include_router(tracking_router, prefix="/t")
 except Exception as e:
     print(f"Warning: tracking router not loaded: {e}")
 
 try:
     from app.api.routes.click_tracking import router as click_router
-    app.include_router(click_router)
+    app.include_router(click_router, prefix="/t")
 except Exception as e:
     print(f"Warning: click tracking router not loaded: {e}")
 
