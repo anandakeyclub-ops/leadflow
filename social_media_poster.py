@@ -504,21 +504,62 @@ def load_image_history() -> list:
 
 def save_image_history(url: str):
     h = load_image_history(); h.append(url)
-    IMAGE_HISTORY_FILE.write_text(json.dumps(h[-60:], indent=2))
+    # Keep 200 (was 60) so small pools don't recycle before the library is exhausted.
+    IMAGE_HISTORY_FILE.write_text(json.dumps(h[-200:], indent=2))
+
+def _all_library_images() -> list:
+    """Every unique image URL across all TAX_IMAGES categories, de-duplicated."""
+    seen, out = set(), []
+    for urls in TAX_IMAGES.values():
+        for u in urls:
+            if u not in seen:
+                seen.add(u); out.append(u)
+    return out
+
+def _least_recently_used(history: list) -> str:
+    """The library image used longest ago (never-used images win first)."""
+    last_pos = {u: i for i, u in enumerate(history)}   # higher index = more recent
+    return min(_all_library_images(), key=lambda u: last_pos.get(u, -1))
 
 def get_image_for_post(post_type: str) -> str:
     categories = POST_IMAGE_MAP.get(post_type, ["contractor","stress"])
-    recent     = set(load_image_history())
+    history    = load_image_history()
+    recent     = set(history)
     for cat in categories:
         pool  = TAX_IMAGES.get(cat, [])
         fresh = [img for img in pool if img not in recent]
         if fresh:
             chosen = random.choice(fresh)
             save_image_history(chosen); return chosen
-    # All used — pick from primary category
-    pool = TAX_IMAGES.get(categories[0], list(TAX_IMAGES["stress"]))
-    chosen = random.choice(pool)
+    # Mapped categories exhausted — pick the LEAST-RECENTLY-USED image from the
+    # FULL library instead of a random repeat from the primary category.
+    chosen = _least_recently_used(history)
     save_image_history(chosen); return chosen
+
+def show_image_status():
+    """--image-status: per-category counts, <10 flags, and used-recently vs fresh."""
+    import collections
+    history = load_image_history()
+    recent  = set(history)
+    cnt     = collections.Counter(history)
+    print(f"\n{'='*64}\n  IMAGE LIBRARY STATUS\n{'='*64}")
+    total = 0
+    for cat, urls in TAX_IMAGES.items():
+        total += len(urls)
+        used  = sum(1 for u in urls if u in recent)
+        flag  = "  ⚠️ FEWER THAN 10" if len(urls) < 10 else ""
+        print(f"  {cat:<15} {len(urls):>2} imgs | {used} used recently | {len(urls)-used} fresh{flag}")
+    print(f"  {'-'*58}")
+    print(f"  {'TOTAL':<15} {total:>2} unique images across {len(TAX_IMAGES)} categories")
+    print(f"  history file : {len(history)} entries (cap 200) | {len(set(history))} unique")
+    fresh = [u for u in _all_library_images() if u not in recent]
+    print(f"\n  🟢 FRESH (not in recent history): {len(fresh)}")
+    for u in fresh:
+        print(f"     ...{u[-50:]}")
+    print(f"\n  🔴 RECENTLY USED:")
+    for u in _all_library_images():
+        if u in recent:
+            print(f"     {cnt[u]}x  ...{u[-50:]}")
 
 
 # ── Tones ──────────────────────────────────────────────────────────────────────
@@ -2307,6 +2348,8 @@ def main():
     parser.add_argument("--force",              action="store_true",
                         help="Post even if quality score < 85")
     parser.add_argument("--performance-summary",action="store_true")
+    parser.add_argument("--image-status",       action="store_true",
+                        help="Show image library usage (per-category counts, fresh vs recently used)")
     parser.add_argument("--score",              action="store_true",
                         help="Score a blog topic before generating")
     parser.add_argument("--blog",               action="store_true",
@@ -2333,6 +2376,9 @@ def main():
     print(f"  Quality threshold: {QUALITY_THRESHOLD}/100")
     if args.dry_run: print("  DRY RUN")
     print(f"{sep}\n")
+
+    if args.image_status:
+        show_image_status(); return
 
     if args.performance_summary:
         show_performance_summary(); return
