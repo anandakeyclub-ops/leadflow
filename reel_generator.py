@@ -66,7 +66,7 @@ HEYGEN_MONTHLY_LIMIT     = HEYGEN_MONTHLY_CREDITS // HEYGEN_CREDITS_PER_VIDEO
 HEYGEN_BUFFER            = 2
 HEYGEN_MAX_USE           = HEYGEN_MONTHLY_LIMIT - HEYGEN_BUFFER  # 18
 
-QUALITY_THRESHOLD = 80  # Unified threshold — matches social_media_poster.py
+QUALITY_THRESHOLD = 70  # reel viral gate (script was built around ~72; 80 was blocking strong content)
 
 FLORIDA_COUNTIES = [
     "Miami-Dade", "Palm Beach", "Broward", "Orange", "Hillsborough",
@@ -1701,7 +1701,8 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
             f"{format_block}"
         )
 
-    raw = call_claude(prompts.get(reel_type, prompts["educational"]), max_tokens=1000)
+    raw = call_claude(prompts.get(reel_type, prompts["educational"]), max_tokens=4000)
+    print(f"  DEBUG raw length: {len(raw)} chars, first 200: {raw[:200]}")
 
     script   = _extract_section(raw, "SCRIPT")
     caption  = _extract_section(raw, "CAPTION")
@@ -1798,6 +1799,19 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
     }
 
 
+def _strip_md(s: str) -> str:
+    """Strip leading markdown header/bold/list markers (# ## ** * - >) so a line
+    like '**SCRIPT:**' or '# SCRIPT:' matches the same as plain 'SCRIPT:'."""
+    s = s.strip()
+    while s and s[0] in "#*->":
+        s = s[1:].lstrip()
+    return s
+
+def _strip_md_value(s: str) -> str:
+    """Strip surrounding markdown emphasis from an extracted value, e.g. the
+    trailing '**' in '**SCRIPT:** the text'."""
+    return s.strip().strip("*").strip()
+
 def _extract_section(text: str, section: str) -> str:
     lines  = text.splitlines(); result = []; inside = False
     stops  = {"SCRIPT","CAPTION","HASHTAGS","VISUAL_CUES","YOUTUBE_TITLE",
@@ -1807,21 +1821,26 @@ def _extract_section(text: str, section: str) -> str:
                "PLATFORM_VARIANTS","RETENTION_PREDICTION","PREDICTED_3S_HOLD",
                "PREDICTED_10S_HOLD","PREDICTED_COMPLETION","PREDICTED_SHARE_RATE",
                "PREDICTED_COMMENT_RATE"}
+    sec_u = section.upper()
     for line in lines:
-        if line.strip().startswith(f"{section}:"):
+        cleaned = _strip_md(line)
+        if cleaned.upper().startswith(f"{sec_u}:"):
             inside = True
-            rest   = line.split(":", 1)[1].strip()
+            rest   = _strip_md_value(cleaned.split(":", 1)[1])
             if rest: result.append(rest)
             continue
         if inside:
-            if any(line.strip().startswith(f"{s}:") for s in stops): break
+            if any(_strip_md(line).upper().startswith(f"{s}:") for s in stops):
+                break
             result.append(line)
     return "\n".join(result).strip()
 
 def _extract_inline(text: str, key: str) -> str:
+    k = key.upper()
     for line in text.splitlines():
-        if line.strip().startswith(f"{key}:"):
-            return line.split(":", 1)[1].strip()
+        cleaned = _strip_md(line)
+        if cleaned.upper().startswith(f"{k}:"):
+            return _strip_md_value(cleaned.split(":", 1)[1])
     return ""
 
 def _parse_visual_cues(raw: str, fallback: list) -> list:
