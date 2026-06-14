@@ -17,7 +17,7 @@ Write-Host "`n[LeadFlow] Setting up scheduled tasks..." -ForegroundColor Cyan
 # "550 5.4.5 Daily user sending limit exceeded" throttle errors. Removed.
 $emailAction = New-ScheduledTaskAction `
     -Execute $python `
-    -Argument "-m app.workers.send_email_sequence --auto --limit 100" `
+    -Argument "-m app.workers.send_email_sequence --auto --limit 50 --delay 12" `
     -WorkingDirectory $workdir
 
 $emailTriggers = @(

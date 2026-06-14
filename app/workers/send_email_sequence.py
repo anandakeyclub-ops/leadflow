@@ -18,8 +18,8 @@ Recommended install path:
 Usage:
   python -m app.workers.send_email_sequence --status
   python -m app.workers.send_email_sequence --migrate-only
-  python -m app.workers.send_email_sequence --auto --limit 100 --dry-run
-  python -m app.workers.send_email_sequence --auto --limit 100
+  python -m app.workers.send_email_sequence --auto --limit 50 --dry-run
+  python -m app.workers.send_email_sequence --auto --limit 50
   python -m app.workers.send_email_sequence --step 4 --limit 50
 """
 from __future__ import annotations
@@ -53,7 +53,11 @@ APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
 SENDER_NAME = os.getenv("GMAIL_SENDER_NAME", "Romy")
 BOOKING_LINK = os.getenv("BOOKING_LINK", "https://taxcasereview.org/quiz")
 TRACKING_BASE = os.getenv("TRACKING_BASE_URL", "http://localhost:8000")
-DAILY_LIMIT = int(os.getenv("DAILY_EMAIL_LIMIT", "100"))
+# 50 matches the Gmail Workspace sending ceiling this account is throttled to
+# (~56/day). Going higher just produces "550 5.4.5 Daily user sending limit
+# exceeded" throttles. Raise only after migrating to a dedicated ESP (see
+# docs/esp_migration_plan.md).
+DAILY_LIMIT = int(os.getenv("DAILY_EMAIL_LIMIT", "50"))
 CAMPAIGN_ID = os.getenv("CAMPAIGN_ID", "lien_outreach_2026")
 STALE_QUEUE_HOURS = int(os.getenv("EMAIL_STALE_QUEUE_HOURS", "6"))
 
