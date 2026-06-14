@@ -289,7 +289,7 @@ SUBJECT_LINES: dict[int, list[str]] = {
     # "Hillsborough County filing" / "Regarding the IRS federal tax lien in
     # Miami..."). Per data, step 1 no longer rotates — every contact gets the
     # winner, personalized by county. choose_subject() handles the no-county
-    # fallback and avoids "County County" duplication.
+    # fallback (-> state, then generic) and avoids "County County" duplication.
     1: [
         "Quick question about your {county} County filing",
     ],
@@ -359,6 +359,34 @@ CTA_LABELS = [
 ]
 
 
+# counties.state is stored as a 2-letter abbreviation; map to the full name so
+# the step-1 state fallback reads naturally ("your Florida filing", not "your FL").
+US_STATE_NAMES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "DC": "District of Columbia", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii",
+    "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+    "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine",
+    "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
+    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana", "NE": "Nebraska",
+    "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico",
+    "NY": "New York", "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
+    "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island",
+    "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas",
+    "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+}
+
+
+def _state_full_name(state) -> str:
+    """Full state name from an abbreviation (falls back to the raw value if it's
+    not a known 2-letter code, or already a full name)."""
+    s = str(state or "").strip()
+    if not s or s.lower() in ("unknown", "none"):
+        return ""
+    return US_STATE_NAMES.get(s.upper(), s)
+
+
 def choose_subject(step: int, lead: dict, first_name: str, county: str, trade: str) -> tuple[str, str]:
     # Normalize county: strip a trailing "County" so the templates' " County"
     # suffix never doubles ("Miami-Dade County" -> "Miami-Dade"), and treat the
@@ -372,10 +400,14 @@ def choose_subject(step: int, lead: dict, first_name: str, county: str, trade: s
         county_clean = raw
 
     # Step 1: force the proven winner (17.2% open). Personalized by county for
-    # every contact; clean fallback when county is unknown.
+    # every contact; if county is missing, fall back to the contact's state
+    # ("Quick question about your Florida filing"); then a generic fallback.
     if step == 1:
         if county_clean:
             return f"Quick question about your {county_clean} County filing", "s1_v1"
+        state_name = _state_full_name(lead.get("state"))
+        if state_name:
+            return f"Quick question about your {state_name} filing", "s1_v1_state"
         return "Quick question about your tax filing", "s1_v1_nc"
 
     template, idx = stable_choice(SUBJECT_LINES[step], [lead.get("lead_id"), lead.get("email"), step, CAMPAIGN_ID])
@@ -659,7 +691,7 @@ def get_step1_leads(cur, limit: int, county_filter: str | None = None) -> list[d
             SELECT DISTINCT ON (LOWER(ldc.email))
                 ldc.id AS lead_id, ldc.email, ldc.full_name, ldc.debtor_name,
                 ldc.phone, ldc.confidence, ldc.trade,
-                c.county_name, nl.lien_type, nl.filed_date, nl.amount, nl.pdf_path
+                c.county_name, c.state, nl.lien_type, nl.filed_date, nl.amount, nl.pdf_path
             FROM lien_dbpr_contacts ldc
             JOIN normalized_liens nl ON ldc.lien_id = nl.id
             JOIN counties c ON ldc.county_id = c.id
