@@ -954,11 +954,12 @@ def build_lead_database_section(lead: dict, states: list[dict], counties: list[d
 # Pipeline-log–driven sections (collection runs + content automation)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _read_pipeline_today() -> list[dict]:
-    """All pipeline-log records written today (logs/pipeline/YYYY-MM-DD.jsonl).
-    Every worker that uses PipelineLogger appends one record per run."""
+def _read_pipeline_today(d=None) -> list[dict]:
+    """All pipeline-log records for a given day (logs/pipeline/YYYY-MM-DD.jsonl);
+    defaults to today. Every worker that uses PipelineLogger appends one record."""
     from datetime import date
-    f = BASE_DIR / "logs" / "pipeline" / f"{date.today().isoformat()}.jsonl"
+    d = d or date.today()
+    f = BASE_DIR / "logs" / "pipeline" / f"{d.isoformat()}.jsonl"
     if not f.exists():
         return []
     out = []
@@ -1027,6 +1028,79 @@ def build_collection_status_section(runs: list[dict]) -> str:
     return sec("📥 Collection Runs Today (per state)", simple_table(
         ["State", "Status", "New liens", "Started", "Detail"], rows),
         "Did today's scrape/enrichment run per state, and what did it add.")
+
+
+def _email_sends_by_day(cur, since) -> dict:
+    """{ 'YYYY-MM-DD': sent_count } for sends on/after `since`."""
+    cur.execute("""
+        SELECT DATE(sent_at) AS d, COUNT(*) FROM email_sends
+        WHERE status = 'sent' AND sent_at >= %s
+        GROUP BY 1
+    """, (since,))
+    return {r[0].isoformat(): r[1] for r in cur.fetchall()}
+
+
+def _blog_publish_dates() -> set:
+    """Set of 'YYYY-MM-DD' dates a blog was published (data/blog_publish_history.json)."""
+    f = BASE_DIR / "data" / "blog_publish_history.json"
+    if not f.exists():
+        return set()
+    try:
+        return set(json.loads(f.read_text()).values())
+    except Exception:
+        return set()
+
+
+def build_weekly_calendar_section() -> str:
+    """Full-week scheduled-vs-actual grid (rows = automation, cols = Mon→Sun).
+    ✅ ran+ok · ❌ scheduled but missing/failed · ⬜ scheduled (upcoming) · ➖ not scheduled."""
+    from datetime import date, timedelta
+    today  = date.today()
+    monday = today - timedelta(days=today.weekday())
+    days   = [monday + timedelta(days=i) for i in range(7)]          # Mon..Sun
+    WD     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    runs_by_day  = {d: _read_pipeline_today(d) for d in days}
+    email_counts = safe_query(lambda cur: _email_sends_by_day(cur, monday), {})
+    blog_dates   = _blog_publish_dates()
+
+    def ran_ok(d, pred) -> bool:
+        return any(r.get("status") == "ok" and pred(r.get("run_type", "")) for r in runs_by_day[d])
+
+    # (label, scheduled?(weekday 0=Mon), ran+succeeded?(day))
+    automations = [
+        ("📧 Email sends",   lambda wd: wd in (0, 1, 2, 3, 5),                       # Mon-Thu + Sat
+         lambda d: email_counts.get(d.isoformat(), 0) > 0),
+        ("📱 Social post",   lambda wd: True,
+         lambda d: ran_ok(d, lambda t: t == "social_post")),
+        ("🎬 Reel",          lambda wd: wd in (2, 3, 6),                             # Wed, Thu, Sun
+         lambda d: ran_ok(d, lambda t: t.startswith("reel_"))),
+        ("📝 Blog post",     lambda wd: wd in (0, 1, 2, 3, 4, 5),                    # Mon-Sat
+         lambda d: d.isoformat() in blog_dates),
+        ("📥 Data collection", lambda wd: True,                                      # daily 6:30 AM
+         lambda d: ran_ok(d, lambda t: t.startswith("data_collection_"))),
+        ("🛰️ Weekly intel",  lambda wd: wd == 6,                                     # Sun 7:30 AM
+         lambda d: ran_ok(d, lambda t: t == "weekly_intelligence")),
+        ("📊 Daily summary", lambda wd: True,                                        # daily 6 PM
+         lambda d: ran_ok(d, lambda t: t == "daily_summary")),
+    ]
+
+    def cell(scheduled: bool, ok: bool, d) -> str:
+        if not scheduled:        return "<span style='color:#cbd5e1'>➖</span>"
+        if ok:                   return "✅"
+        if d > today:            return "<span style='color:#94a3b8'>⬜</span>"      # upcoming
+        return "<span style='color:#b91c1c'>❌</span>"                              # past/today, missing
+
+    rows = []
+    for label, sched, didrun in automations:
+        cells = [cell(sched(d.weekday()), sched(d.weekday()) and didrun(d), d) for d in days]
+        rows.append([label] + cells)
+
+    headers = ["Automation"] + [f"{WD[d.weekday()]} {d.month}/{d.day}" for d in days]
+    return sec("🗓️ Weekly Automation Calendar",
+               simple_table(headers, rows),
+               "Scheduled vs actual, this week (Mon→Sun). "
+               "✅ ran+ok · ❌ scheduled but missing/failed · ⬜ scheduled (upcoming) · ➖ not scheduled.")
 
 
 def build_content_automation_section(runs: list[dict]) -> str:
@@ -1299,6 +1373,7 @@ def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, 
     {build_action_items(lead, seq, ga4, clarity, ux, conv)}
     {build_lead_database_section(lead, states, counties)}
     {build_collection_status_section(_pipeline_runs)}
+    {build_weekly_calendar_section()}
     {build_content_automation_section(_pipeline_runs)}
     {build_revenue_section(conv)}
     {build_traffic_section(ga4, clarity, ux)}
