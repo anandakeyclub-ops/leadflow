@@ -66,7 +66,7 @@ HEYGEN_MONTHLY_LIMIT     = HEYGEN_MONTHLY_CREDITS // HEYGEN_CREDITS_PER_VIDEO
 HEYGEN_BUFFER            = 2
 HEYGEN_MAX_USE           = HEYGEN_MONTHLY_LIMIT - HEYGEN_BUFFER  # 18
 
-QUALITY_THRESHOLD = 70  # reel viral gate (script was built around ~72; 80 was blocking strong content)
+QUALITY_THRESHOLD = 65  # reel viral gate; scores sit 68-72, so 65 lets strong content (e.g. 68-69) post instead of silently blocking
 
 FLORIDA_COUNTIES = [
     "Miami-Dade", "Palm Beach", "Broward", "Orange", "Hillsborough",
