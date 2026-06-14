@@ -11,16 +11,18 @@ $workdir = "C:\Users\Dana\Desktop\leadflow"
 
 Write-Host "`n[LeadFlow] Setting up scheduled tasks..." -ForegroundColor Cyan
 
-# ── Email Sequence — Tue/Wed/Thu at 8:00 AM ──────────────────────────────────
+# ── Daily Email — 8:00 AM only, on scheduled days (Mon/Tue/Wed/Thu/Sat) ──────
+# Single morning send. The extra 1:00 PM and 5:00 PM runs were redundant — they
+# fired after the day's Gmail limit was already spent, so they only logged
+# "550 5.4.5 Daily user sending limit exceeded" throttle errors. Removed.
 $emailAction = New-ScheduledTaskAction `
     -Execute $python `
     -Argument "-m app.workers.send_email_sequence --auto --limit 100" `
     -WorkingDirectory $workdir
 
 $emailTriggers = @(
-    $(New-ScheduledTaskTrigger -Weekly -DaysOfWeek Tuesday   -At 8:00AM),
-    $(New-ScheduledTaskTrigger -Weekly -DaysOfWeek Wednesday -At 8:00AM),
-    $(New-ScheduledTaskTrigger -Weekly -DaysOfWeek Thursday  -At 8:00AM)
+    $(New-ScheduledTaskTrigger -Weekly `
+        -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Saturday -At 8:00AM)
 )
 
 $emailSettings = New-ScheduledTaskSettingsSet `
@@ -28,15 +30,26 @@ $emailSettings = New-ScheduledTaskSettingsSet `
     -RestartCount 1 `
     -RestartInterval (New-TimeSpan -Minutes 30)
 
-Register-ScheduledTask `
-    -TaskName   "LeadFlow - Email Sequence" `
-    -Action     $emailAction `
-    -Trigger    $emailTriggers `
-    -Settings   $emailSettings `
-    -RunLevel   Highest `
-    -Force | Out-Null
+# RunLevel Highest needs an elevated shell; fall back to a per-user task so this
+# still registers if run non-elevated.
+try {
+    Register-ScheduledTask `
+        -TaskName "LeadFlow - Daily Email" `
+        -Action   $emailAction `
+        -Trigger  $emailTriggers `
+        -Settings $emailSettings `
+        -RunLevel Highest `
+        -Force -ErrorAction Stop | Out-Null
+} catch {
+    Register-ScheduledTask `
+        -TaskName "LeadFlow - Daily Email" `
+        -Action   $emailAction `
+        -Trigger  $emailTriggers `
+        -Settings $emailSettings `
+        -Force | Out-Null
+}
 
-Write-Host "  ✓ Email Sequence: Tue/Wed/Thu at 8:00 AM (100 emails/day)" -ForegroundColor Green
+Write-Host "  ✓ Daily Email: 8:00 AM Mon/Tue/Wed/Thu/Sat (1 PM & 5 PM removed)" -ForegroundColor Green
 
 # ── Weekly Scrape — Every Monday at 7:00 AM ──────────────────────────────────
 $scrapeAction = New-ScheduledTaskAction `
