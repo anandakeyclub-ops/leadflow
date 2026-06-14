@@ -344,7 +344,8 @@ def _get_state_breakdown(cur):
         cur.execute("SET LOCAL statement_timeout = '30s'")
         cur.execute("""
             WITH lien_counts AS (
-                SELECT COALESCE(c.state,'Unknown') AS state, COUNT(*) AS liens
+                SELECT COALESCE(c.state,'Unknown') AS state, COUNT(*) AS liens,
+                    COUNT(*) FILTER (WHERE nl.created_at >= NOW() - INTERVAL '24 hours') AS new_24h
                 FROM normalized_liens nl JOIN counties c ON nl.county_id = c.id
                 GROUP BY 1
             ),
@@ -378,7 +379,8 @@ def _get_state_breakdown(cur):
             SELECT a.state, COALESCE(l.liens,0), COALESCE(cc.matched_liens,0),
                    COALESCE(cc.email_ready,0), COALESCE(cc.high_confidence,0),
                    COALESCE(sc.email1_sent,0), COALESCE(sc.email2_sent,0),
-                   COALESCE(sc.email3_sent,0), COALESCE(sc.replied,0)
+                   COALESCE(sc.email3_sent,0), COALESCE(sc.replied,0),
+                   COALESCE(l.new_24h,0)
             FROM all_states a
             LEFT JOIN lien_counts l   ON l.state  = a.state
             LEFT JOIN contact_counts cc ON cc.state = a.state
@@ -399,6 +401,7 @@ def _get_state_breakdown(cur):
                 "email2_sent": r[6] or 0,
                 "email3_sent": r[7] or 0,
                 "replied": r[8] or 0,
+                "new_24h": (r[9] if len(r) > 9 else 0) or 0,
                 "match_rate": _pct(r[2] or 0, r[1] or 0),
                 "email_coverage_rate": _pct(r[3] or 0, r[1] or 0),
             })
@@ -904,9 +907,11 @@ def build_lead_database_section(lead: dict, states: list[dict], counties: list[d
 
     state_rows = []
     for s in states:
+        new24 = s.get("new_24h", 0)
         state_rows.append([
             h(s["state"]),
             f"{s['liens']:,}",
+            (f"<b style='color:#15803d'>+{new24:,}</b>" if new24 else "—"),
             f"{s['matched_liens']:,}",
             f"{s['email_ready']:,}",
             f"{s['high_confidence']:,}",
@@ -935,7 +940,7 @@ def build_lead_database_section(lead: dict, states: list[dict], counties: list[d
         sec("🏦 Lead Engine — Lien → Contractor → Email Pipeline", table(rows),
             "This shows whether scraping and enrichment are producing usable leads, not just raw liens.")
         + sec("🗺️ State Breakdown", simple_table(
-            ["State", "Liens", "Matched", "Email ready", "High conf", "Match", "Coverage", "Email 1", "Replied"],
+            ["State", "Liens", "New 24h", "Matched", "Email ready", "High conf", "Match", "Coverage", "Email 1", "Replied"],
             state_rows
         ))
         + sec("📍 County Breakdown", simple_table(
@@ -943,6 +948,136 @@ def build_lead_database_section(lead: dict, states: list[dict], counties: list[d
             county_rows
         ))
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline-log–driven sections (collection runs + content automation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _read_pipeline_today() -> list[dict]:
+    """All pipeline-log records written today (logs/pipeline/YYYY-MM-DD.jsonl).
+    Every worker that uses PipelineLogger appends one record per run."""
+    from datetime import date
+    f = BASE_DIR / "logs" / "pipeline" / f"{date.today().isoformat()}.jsonl"
+    if not f.exists():
+        return []
+    out = []
+    for line in f.read_text(encoding="utf-8").strip().splitlines():
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            pass
+    return out
+
+
+def _latest_run(runs: list[dict], predicate) -> dict | None:
+    """Most recent record (by start time) whose run_type matches predicate."""
+    matches = [r for r in runs if predicate(r.get("run_type", ""))]
+    return max(matches, key=lambda r: r.get("started", ""), default=None)
+
+
+def _status_chip(ok: bool) -> str:
+    return (badge("✅ ran", "#dcfce7", "#15803d") if ok
+            else badge("❌ missing", "#fee2e2", "#b91c1c"))
+
+
+def _blog_published_today() -> tuple[bool, str]:
+    """Blog tracks its own publish history (data/blog_publish_history.json:
+    {slug: 'YYYY-MM-DD'}) instead of PipelineLogger."""
+    from datetime import date
+    f = BASE_DIR / "data" / "blog_publish_history.json"
+    if not f.exists():
+        return False, ""
+    try:
+        hist = json.loads(f.read_text())
+    except Exception:
+        return False, ""
+    today = date.today().isoformat()
+    todays = [slug for slug, d in hist.items() if d == today]
+    return (bool(todays), todays[0] if todays else "")
+
+
+def build_collection_status_section(runs: list[dict]) -> str:
+    """Task 2 — did the data-collection pipeline run today, per state: how many
+    new liens added and any failures. Sourced from data_collection_<state>
+    pipeline-log records (scripts/data_engine/run_daily.py)."""
+    coll = [r for r in runs if r.get("run_type", "").startswith("data_collection_")]
+    if not coll:
+        return sec("📥 Collection Runs Today (per state)",
+                   "<p style='color:#94a3b8;font-size:13px'>No data-collection runs "
+                   "logged today — scripts/data_engine/run_daily.py has not run yet.</p>",
+                   "Did today's scrape/enrichment run per state, and what did it add.")
+    rows = []
+    for r in sorted(coll, key=lambda x: x.get("started", "")):
+        state = r["run_type"].replace("data_collection_", "").upper()
+        m = r.get("metrics", {})
+        ok = r.get("status") == "ok" and not m.get("error")
+        status = (badge("✅ ok", "#dcfce7", "#15803d") if ok
+                  else badge("❌ failed", "#fee2e2", "#b91c1c"))
+        liens = m.get("liens", 0)
+        detail = (f"lic +{m.get('licenses',0)} · match +{m.get('matched',0)} · "
+                  f"synced {m.get('synced',0)}") if ok else h(m.get("error", "see logs"))[:90]
+        rows.append([
+            h(state),
+            status,
+            (f"<b style='color:#15803d'>+{liens:,}</b>" if liens else "0"),
+            r.get("started", "")[11:19],
+            detail,
+        ])
+    return sec("📥 Collection Runs Today (per state)", simple_table(
+        ["State", "Status", "New liens", "Started", "Detail"], rows),
+        "Did today's scrape/enrichment run per state, and what did it add.")
+
+
+def build_content_automation_section(runs: list[dict]) -> str:
+    """Task 3 — today's status for every content automation. ❌ means the worker
+    did not run or failed today, so a missing automation is immediately visible."""
+    rows = []
+
+    blog_ok, blog_slug = _blog_published_today()
+    rows.append(["Blog post", _status_chip(blog_ok),
+                 (h(blog_slug) if blog_ok else "no post published today")])
+
+    social = _latest_run(runs, lambda t: t == "social_post")
+    if social:
+        m = social.get("metrics", {})
+        sent = bool(m.get("sent"))
+        rows.append(["Social media post",
+                     _status_chip(social.get("status") == "ok" and sent),
+                     (f"{m.get('platform','?')} · {m.get('post_type','?')} · "
+                      f"score {m.get('quality','?')}" if sent
+                      else f"generated but not sent ({m.get('post_type','?')})")])
+    else:
+        rows.append(["Social media post", _status_chip(False), "no run logged today"])
+
+    reel = _latest_run(runs, lambda t: t.startswith("reel_"))
+    if reel:
+        m = reel.get("metrics", {})
+        posted = bool(m.get("posted")) and not m.get("dry_run")
+        rows.append(["Reel",
+                     _status_chip(reel.get("status") == "ok" and posted),
+                     (f"{m.get('engine','?')} · {m.get('reel_type','?')} · "
+                      f"score {m.get('quality_score','?')}"
+                      + (" · posted" if posted else " · not posted"))])
+    else:
+        rows.append(["Reel", _status_chip(False), "no run logged today"])
+
+    ds = _latest_run(runs, lambda t: t == "daily_summary")
+    if ds:
+        t = ds.get("started", "")
+        try:
+            when = datetime.fromisoformat(t).strftime("%I:%M %p")
+        except Exception:
+            when = t[11:19]
+        rows.append(["Daily summary", _status_chip(ds.get("status") == "ok"),
+                     f"last sent {when} → {ds.get('metrics',{}).get('to','')}"])
+    else:
+        rows.append(["Daily summary", badge("▶ running", "#fef9c3", "#854d0e"),
+                     "this run (logged after send)"])
+
+    return sec("🤖 Content Automation — Today", simple_table(
+        ["Automation", "Status", "Detail"], rows),
+        "Pulled from logs/pipeline/. ❌ = the worker did not run or failed today.")
 
 
 def build_data_collection_section(cur) -> str:
@@ -1141,6 +1276,7 @@ def build_booking_section(bk: dict) -> str:
 
 def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, conv: dict, ga4: dict, clarity: dict, ux: dict, today: str, bk: dict | None = None, data_section: str = ""):
     subject = f"📊 TaxCase Review Optimization Intelligence — {today}"
+    _pipeline_runs = _read_pipeline_today()
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1161,12 +1297,14 @@ def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, 
     </tr></table>
 
     {build_action_items(lead, seq, ga4, clarity, ux, conv)}
+    {build_lead_database_section(lead, states, counties)}
+    {build_collection_status_section(_pipeline_runs)}
+    {build_content_automation_section(_pipeline_runs)}
     {build_revenue_section(conv)}
     {build_traffic_section(ga4, clarity, ux)}
     {build_booking_section(bk or {})}
     {build_email_sequence_section(seq)}
     {data_section}
-    {build_lead_database_section(lead, states, counties)}
 
     <p style="margin-top:28px;color:#64748b;font-size:12px;border-top:1px solid #e2e8f0;padding-top:14px">
       TaxCase Review · LeadFlow Pipeline · {datetime.now().strftime('%Y-%m-%d %H:%M')} · Campaign: {h(CAMPAIGN_ID)}
