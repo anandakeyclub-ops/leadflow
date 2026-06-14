@@ -46,6 +46,7 @@ load_dotenv()
 # ── Config ─────────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 HEYGEN_API_KEY    = os.getenv("HEYGEN_API_KEY", "")
+PEXELS_API_KEY    = os.getenv("PEXELS_API_KEY", "")  # free key -> live themed video backgrounds
 HEYGEN_AVATAR_ID  = os.getenv("HEYGEN_AVATAR_ID", "")
 HEYGEN_VOICE_ID   = os.getenv("HEYGEN_VOICE_ID", "8661cd40d6c44c709e2d0031c0186ada")
 MAKE_WEBHOOK_URL  = os.getenv("MAKE_WEBHOOK_URL", "")
@@ -1925,22 +1926,162 @@ def show_performance_summary():
 
 
 # ── HeyGen API ─────────────────────────────────────────────────────────────────
+DEFAULT_BG_COLOR = "#0f1b2d"
+
+# Vertical (1080x1920) still backgrounds per visual-cue type — verified hotlinkable
+# Unsplash photos (the same source the social poster uses). This is the reliable
+# tier: it turns "avatar on a black screen" into a themed scene for every cue.
+_U = "https://images.unsplash.com/photo-{id}?w=1280&h=1920&fit=crop"
+CUE_BG_IMAGES = {
+    "irs_notice":      _U.format(id="1568602471122-7832951cc4c5"),
+    "lien_stamp":      _U.format(id="1554224154-26032ffc0d07"),
+    "lien_document":   _U.format(id="1590283603385-17ffb3a7f29f"),
+    "public_record":   _U.format(id="1450101499163-c8848c66ca85"),
+    "mailbox":         _U.format(id="1619468129361-605ebea04b44"),
+    "bank_freeze":     _U.format(id="1553729459-efe14ef6055d"),
+    "debt_overlay":    _U.format(id="1565372195458-9de0b320ef04"),
+    "penalty_ticker":  _U.format(id="1559526324-593bc073d938"),
+    "dashboard_alert": _U.format(id="1611974789855-9c2a0a7236a3"),
+    "countdown":       _U.format(id="1542744173-8e7e53415bb0"),
+    "calendar":        _U.format(id="1434030216411-0b793f4b4173"),
+    "contractor_truck":_U.format(id="1504307651254-35680f356dfd"),
+    "revenue_officer": _U.format(id="1454165804606-c3d57bc86b40"),
+    "phone_ring":      _U.format(id="1521791136064-7986c2920216"),
+    "county_map":      _U.format(id="1619468129361-605ebea04b44"),
+    "heat_map":        _U.format(id="1633158829585-23ba8f7c8caf"),
+    "before_after":    _U.format(id="1503023345310-bd7c1de61c7d"),
+    "checklist":       _U.format(id="1554224154-26032ffc0d07"),
+    "myth_reality":    _U.format(id="1579621970563-ebec7560ff3e"),
+    "red_arrow":       _U.format(id="1553729459-efe14ef6055d"),
+}
+DEFAULT_BG_IMAGE = CUE_BG_IMAGES["irs_notice"]
+
+# Verified royalty-free Pexels video backgrounds (direct CDN, hotlinkable, free
+# license). Sparse on purpose — guessed Pexels URLs 403, so only confirmed-live
+# URLs go here. Set PEXELS_API_KEY for live, theme-matched video on every cue.
+CUE_BG_VIDEOS = {
+    "irs_notice":    "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    "lien_document": "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    "public_record": "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    "lien_stamp":    "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+}
+
+# Pexels search query per cue — used only when PEXELS_API_KEY is set.
+CUE_SEARCH_TERMS = {
+    "irs_notice": "tax documents paperwork desk", "lien_stamp": "legal documents stamp",
+    "lien_document": "legal paperwork documents", "public_record": "documents filing office",
+    "mailbox": "mailbox letters mail", "bank_freeze": "money finance bank",
+    "debt_overlay": "money cash counting", "penalty_ticker": "stock market chart money",
+    "dashboard_alert": "red warning alert screen", "countdown": "clock ticking time",
+    "calendar": "calendar days time", "contractor_truck": "construction worker truck site",
+    "revenue_officer": "government office desk", "phone_ring": "phone call office",
+    "county_map": "united states map", "heat_map": "data map visualization",
+    "before_after": "stressed businessman office", "checklist": "checklist clipboard writing",
+    "myth_reality": "documents desk paperwork", "red_arrow": "financial chart graph",
+}
+
+
+def _media_url_ok(url: str, timeout: float = 6.0) -> bool:
+    """Cheap reachability/type guard before handing a URL to HeyGen."""
+    if not url:
+        return False
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-1024"},
+                         timeout=timeout, stream=True)
+        ctype = r.headers.get("Content-Type", "")
+        r.close()
+        return r.status_code in (200, 206) and ("video" in ctype or "image" in ctype)
+    except Exception:
+        return False
+
+
+def _pexels_video_url(query: str) -> str:
+    """Portrait stock video link from Pexels (requires PEXELS_API_KEY)."""
+    if not PEXELS_API_KEY:
+        return ""
+    try:
+        r = requests.get("https://api.pexels.com/videos/search",
+                         headers={"Authorization": PEXELS_API_KEY},
+                         params={"query": query, "orientation": "portrait",
+                                 "per_page": 5, "size": "medium"}, timeout=10)
+        if r.status_code != 200:
+            return ""
+        for vid in r.json().get("videos", []):
+            files = sorted(vid.get("video_files", []),
+                           key=lambda f: (f.get("height") or 0), reverse=True)
+            for f in files:
+                if (f.get("height") or 0) >= (f.get("width") or 0) and f.get("link"):
+                    return f["link"]
+    except Exception:
+        pass
+    return ""
+
+
+def _first_visual_cue(script_data: dict) -> str:
+    """The opening scene's visual-cue type (drives the opening background)."""
+    cues = script_data.get("visual_cues") or []
+    if cues and isinstance(cues[0], dict):
+        return (cues[0].get("type") or "").strip()
+    sb = script_data.get("visual_storyboard") or []
+    if sb and isinstance(sb[0], dict):
+        return (sb[0].get("cue") or sb[0].get("type") or "").strip()
+    return ""
+
+
+def build_heygen_background(script_data: dict) -> dict:
+    """Background for the opening scene, derived from its visual cue:
+    live Pexels video (if key) -> curated verified video -> themed image -> color."""
+    cue = _first_visual_cue(script_data)
+
+    # 1. Live, theme-matched Pexels video (only if PEXELS_API_KEY is configured)
+    if PEXELS_API_KEY:
+        url = _pexels_video_url(CUE_SEARCH_TERMS.get(cue, "tax finance documents"))
+        if url and _media_url_ok(url):
+            return {"type": "video", "url": url, "play_style": "loop", "fit": "cover"}
+
+    # 2. Curated, confirmed-live stock video for this cue
+    v = CUE_BG_VIDEOS.get(cue)
+    if v and _media_url_ok(v):
+        return {"type": "video", "url": v, "play_style": "loop", "fit": "cover"}
+
+    # 3. Relevant still image (verified Unsplash) — beats a plain color every time
+    img = CUE_BG_IMAGES.get(cue, DEFAULT_BG_IMAGE)
+    if img and _media_url_ok(img):
+        return {"type": "image", "url": img, "fit": "cover"}
+
+    # 4. Plain color (last resort)
+    return {"type": "color", "value": DEFAULT_BG_COLOR}
+
+
 def submit_heygen_video(script_data: dict) -> dict:
     if not HEYGEN_API_KEY: raise RuntimeError("HEYGEN_API_KEY not set")
     if not HEYGEN_AVATAR_ID: raise RuntimeError("HEYGEN_AVATAR_ID not set")
-    payload = {
-        "video_inputs": [{"character": {"type":"avatar","avatar_id":HEYGEN_AVATAR_ID,"avatar_style":"normal"},
-            "voice": {"type":"text","input_text":script_data["script"],"voice_id":HEYGEN_VOICE_ID,"speed":1.0},
-            "background": {"type":"color","value":"#0f1b2d"}}],
-        "dimension": {"width":1080,"height":1920}, "aspect_ratio": "9:16", "caption": True,
-    }
-    r = requests.post("https://api.heygen.com/v2/video/generate",
-        headers={"X-Api-Key":HEYGEN_API_KEY,"Content-Type":"application/json"},
-        json=payload, timeout=30)
+    background = build_heygen_background(script_data)
+    print(f"  HeyGen bg: {background['type']} "
+          f"({background.get('url', background.get('value',''))[:64]}) "
+          f"from cue '{_first_visual_cue(script_data) or 'none'}'")
+
+    def _generate(bg: dict):
+        payload = {
+            "video_inputs": [{"character": {"type":"avatar","avatar_id":HEYGEN_AVATAR_ID,"avatar_style":"normal"},
+                "voice": {"type":"text","input_text":script_data["script"],"voice_id":HEYGEN_VOICE_ID,"speed":1.0},
+                "background": bg}],
+            "dimension": {"width":1080,"height":1920}, "aspect_ratio": "9:16", "caption": True,
+        }
+        return requests.post("https://api.heygen.com/v2/video/generate",
+            headers={"X-Api-Key":HEYGEN_API_KEY,"Content-Type":"application/json"},
+            json=payload, timeout=30)
+
+    r = _generate(background)
+    # Never let a rejected media background kill the render — retry once on color.
+    if r.status_code != 200 and background["type"] != "color":
+        print(f"  HeyGen rejected {background['type']} bg ({r.status_code}); retrying on color")
+        background = {"type": "color", "value": DEFAULT_BG_COLOR}
+        r = _generate(background)
     if r.status_code != 200:
         raise RuntimeError(f"HeyGen error: {r.status_code} - {r.text[:200]}")
     video_id = r.json().get("data",{}).get("video_id","")
-    print(f"  HeyGen: {video_id} | 1080p | No watermark")
+    print(f"  HeyGen: {video_id} | 1080p | No watermark | bg={background['type']}")
     record_heygen_render(video_id, script_data["reel_type"])
     return {"video_id": video_id, "status": "processing"}
 
