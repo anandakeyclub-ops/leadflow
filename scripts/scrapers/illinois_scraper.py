@@ -78,7 +78,9 @@ IL_CITY_COUNTY = {
 
 # ── CourtListener (federal docket API) — primary IL lien source, no WAF ────────
 COURTLISTENER_TOKEN = os.getenv("COURTLISTENER_TOKEN", "")
-CL_DOCKETS_URL = "https://www.courtlistener.com/api/rest/v4/dockets/"
+# Full-text RECAP search (the /dockets/ endpoint has no free-text filter).
+CL_SEARCH_URL = "https://www.courtlistener.com/api/rest/v4/search/"
+CL_SEARCH_DELAY = 13          # seconds between calls (search is throttled 5/min)
 # IL federal district court id -> representative county (court seat).
 IL_FED_DISTRICTS = {"ilnd": "Cook", "ilcd": "Sangamon", "ilsd": "St. Clair"}
 
@@ -93,14 +95,45 @@ def _clean_cl_name(name: str) -> str:
     return n.strip() or (name or "").strip()
 
 
+def _cl_get(url, params, headers, max_tries: int = 5):
+    """GET the CourtListener API, honoring its 5/min search throttle: on HTTP 429
+    it waits the advertised cooldown and retries. Returns parsed JSON or None."""
+    for _ in range(max_tries):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=45)
+        except requests.RequestException as e:
+            print(f"      CourtListener request error: {e}")
+            time.sleep(5)
+            continue
+        if r.status_code == 200:
+            try:
+                return r.json()
+            except ValueError:
+                return None
+        if r.status_code == 429:
+            m = re.search(r"(\d+)\s*seconds", r.text)
+            wait = (int(m.group(1)) + 2) if m else 30
+            print(f"      CourtListener throttled — waiting {min(wait,60)}s")
+            time.sleep(min(wait, 60))
+            continue
+        if r.status_code in (401, 403):
+            print(f"      CourtListener auth failed ({r.status_code}).")
+            return None
+        print(f"      CourtListener HTTP {r.status_code}: {r.text[:120]}")
+        return None
+    return None
+
+
 def collect_il_liens_courtlistener(limit: int = IL_MAX_RECORDS,
                                    dry_run: bool = False) -> int:
     """
-    Query the CourtListener v4 dockets API for federal-tax-lien cases in the IL
-    federal districts (ilnd=Cook/Chicago, ilcd, ilsd), paginating via `next`,
-    and store them in normalized_liens (state='IL', lien_source='COURTLISTENER').
-    Needs COURTLISTENER_TOKEN (free registration at courtlistener.com); returns 0
-    if absent/unauthorized so the caller can fall back to the SOS UCC scraper.
+    Query the CourtListener v4 full-text RECAP search for federal-tax-lien cases
+    in the IL federal districts (ilnd=Cook/Chicago, ilcd, ilsd), newest first,
+    paginating via `next`, and store them in normalized_liens (state='IL',
+    lien_source='COURTLISTENER'). The case_name's 'United States v.' prefix is
+    stripped so the taxpayer/debtor remains. Needs COURTLISTENER_TOKEN (free at
+    courtlistener.com); returns 0 if absent/unauthorized so the caller can fall
+    back to the SOS UCC scraper.
     """
     token = COURTLISTENER_TOKEN or os.getenv("COURTLISTENER_TOKEN", "")
     if not token:
@@ -113,42 +146,42 @@ def collect_il_liens_courtlistener(limit: int = IL_MAX_RECORDS,
     for court, county in IL_FED_DISTRICTS.items():
         if len(all_rows) >= limit:
             break
-        url = CL_DOCKETS_URL
-        params = {"description": "federal tax lien", "court": court,
-                  "page_size": 100}
+        url = CL_SEARCH_URL
+        # Exact phrase keeps the match tight; we still post-filter to U.S.-as-
+        # plaintiff captions, which are the actual federal-tax-lien actions
+        # (full-text alone matches any docket that merely mentions the phrase).
+        params = {"q": '"federal tax lien"', "court": court, "type": "r",
+                  "page_size": 100, "order_by": "dateFiled desc"}
         pages = 0
-        while url and len(all_rows) < limit and pages < 20:
+        before = len(all_rows)
+        while url and len(all_rows) < limit and pages < 25:
             pages += 1
-            r = http_get(url, params=params, headers=headers, timeout=40)
-            params = None  # subsequent `next` URLs already carry the query
-            if r is None:
-                print(f"    IL/CourtListener: {court} unreachable.")
+            data = _cl_get(url, params, headers)
+            params = None  # the `next` cursor URL already carries the query
+            if data is None:
                 break
-            if r.status_code in (401, 403):
-                print(f"    IL/CourtListener: auth failed ({r.status_code}) — "
-                      "check COURTLISTENER_TOKEN. (0 liens)")
-                return 0
-            if r.status_code != 200:
-                print(f"    IL/CourtListener: {court} HTTP {r.status_code}.")
-                break
-            try:
-                j = r.json()
-            except ValueError:
-                break
-            for d in j.get("results", []):
-                name = _clean_cl_name(d.get("case_name") or "")
-                if len(name) < 3:
+            for d in data.get("results", []):
+                raw = (d.get("caseName") or d.get("case_name") or "").strip()
+                name = _clean_cl_name(raw)
+                # Keep only captions where the "United States [of America] v."
+                # (or "USA v.") prefix was actually stripped — i.e. genuine FTL
+                # actions. Excludes "United States Securities and Exchange..."
+                # and other orgs that merely start with "United States".
+                if name == raw or len(name) < 3:
                     continue
                 all_rows.append({
                     "debtor_name": name,
-                    "filing_date": d.get("date_filed"),
-                    "file_number": (d.get("docket_number") or "").strip(),
+                    "filing_date": d.get("dateFiled") or d.get("date_filed"),
+                    "file_number": (d.get("docketNumber")
+                                    or d.get("docket_number") or "").strip(),
                     "county": county,
                 })
-            url = j.get("next")
-            time.sleep(IL_PAGE_DELAY)
+                if len(all_rows) >= limit:
+                    break
+            url = data.get("next")
+            time.sleep(CL_SEARCH_DELAY)
         print(f"    IL/CourtListener: {court} ({county}) -> "
-              f"{sum(1 for x in all_rows if x['county'] == county)} rows so far")
+              f"{len(all_rows) - before} rows")
 
     all_rows = all_rows[:limit]
     if dry_run:
