@@ -63,6 +63,13 @@ GA_DEBUG_DIR       = LEADFLOW_DIR / "data" / "data_engine" / "ga_debug"
 # Saved authenticated cookies (so a manual login can be reused headlessly).
 # Lives under data/ which is gitignored — session cookies are never committed.
 GA_SESSION_FILE    = LEADFLOW_DIR / "data" / "data_engine" / "ga_session.json"
+# A-Z + 0-9 name-prefix sweep: GSCCCA's lien index requires a name in
+# txtSearchName, so sweeping prefixes captures every debtor without knowing
+# names in advance.
+GA_PREFIXES        = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + [str(d) for d in range(10)]
+GA_MAX_TOTAL       = 5000      # cap per full run, across all counties
+GA_PREFIX_DELAY    = 1.5       # seconds between prefix searches
+GA_CHECKPOINT_FILE = LEADFLOW_DIR / "data" / "data_engine" / "ga_checkpoint.json"
 
 # Contractor entity types we care about (search keywords).
 GA_CONTRACTOR_KEYWORDS = [
@@ -72,7 +79,7 @@ GA_CONTRACTOR_KEYWORDS = [
 
 
 # ── LIENS — GSCCCA (authenticated Selenium) ────────────────────────────────────
-def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
+def collect_ga_liens(limit: int = GA_MAX_TOTAL, counties: list | None = None,
                      days_back: int = 3650, dry_run: bool = False,
                      headless: bool = True, manual: bool = False,
                      use_session: bool = False) -> int:
@@ -96,6 +103,8 @@ def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
     counties = counties or GA_LIEN_COUNTIES
     driver = None
     all_rows: list[dict] = []
+    total_stored = 0
+    collected = 0
     try:
         # Manual mode needs a visible window so Dana can solve the CAPTCHA.
         driver = _ga_get_driver(headless=(headless and not manual))
@@ -120,20 +129,55 @@ def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
                 return 0
             print("    GA/GSCCCA: logged in.")
 
+        # A-Z + 0-9 name-prefix sweep with resume + dedup by file_number.
+        cp = _ga_load_checkpoint()
+        seen = set(cp.get("seen_file_numbers", []))
+        progress = cp.get("progress", {})
+        run_limit = min(limit, GA_MAX_TOTAL)
+        stop = False
         for county in counties:
-            if len(all_rows) >= limit:
+            if stop:
                 break
-            try:
-                rows = _gsccca_search_county(driver, county, days_back,
-                                             limit - len(all_rows))
-            except Exception as e:
-                print(f"      [{county}] search error: {type(e).__name__}: {str(e)[:160]}")
-                rows = []
-            for r in rows:
-                r["county"] = county
-            print(f"    GA/GSCCCA: {county} -> {len(rows)} FTL rows")
-            all_rows.extend(rows)
-            time.sleep(1.0)  # polite delay between counties
+            done = progress.get(county)
+            start = (GA_PREFIXES.index(done) + 1) if done in GA_PREFIXES else 0
+            if start:
+                print(f"    GA/GSCCCA: resuming {county} after prefix '{done}'.")
+            for prefix in GA_PREFIXES[start:]:
+                if collected >= run_limit:
+                    print(f"    GA/GSCCCA: run cap {run_limit} reached — stopping.")
+                    stop = True
+                    break
+                try:
+                    rows = _gsccca_search_prefix(driver, county, prefix, days_back)
+                except Exception as e:
+                    print(f"      [{county}/{prefix}] error: "
+                          f"{type(e).__name__}: {str(e)[:140]}")
+                    rows = []
+                new_rows = []
+                for r in rows:
+                    key = (r.get("file_number")
+                           or f"{r.get('name','')}|{r.get('date','')}|{county}")
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    r["county"] = county
+                    new_rows.append(r)
+                if new_rows:
+                    all_rows.extend(new_rows)
+                    collected += len(new_rows)
+                    if not dry_run:
+                        total_stored += _store_ga_liens(new_rows, quiet=True)
+                print(f"    {county} / {prefix} -> {len(rows)} results "
+                      f"({collected} new this run, {len(seen)} total)")
+                # Checkpoint AFTER this prefix's rows are stored, so a resume
+                # never skips a prefix whose data wasn't saved.
+                progress[county] = prefix
+                _ga_save_checkpoint({
+                    "seen_file_numbers": sorted(seen)[-20000:],
+                    "progress": progress,
+                    "updated": datetime.now().isoformat(timespec="seconds"),
+                })
+                time.sleep(GA_PREFIX_DELAY)
     except Exception as e:
         print(f"    GA/GSCCCA selenium error: {type(e).__name__}: {str(e)[:200]}")
     finally:
@@ -143,14 +187,16 @@ def collect_ga_liens(limit: int = MAX_PER_COUNTY, counties: list | None = None,
             except Exception:
                 pass
 
-    all_rows = all_rows[:limit]
     if dry_run:
         print(f"    [DRY RUN] {len(all_rows)} GA FTL liens parsed (not stored):")
         for r in all_rows[:15]:
             print(f"       {(r.get('name') or '')[:42]:<42} | "
-                  f"{r.get('county',''):<10} | {r.get('date','')}")
+                  f"{r.get('county',''):<10} | {r.get('date','')} | "
+                  f"{r.get('file_number','')}")
         return len(all_rows)
-    return _store_ga_liens(all_rows)
+    print(f"    GA/GSCCCA: stored {total_stored} new liens this run "
+          f"({collected} unique parsed).")
+    return total_stored
 
 
 # ── Option A: manual CAPTCHA login ─────────────────────────────────────────────
@@ -409,6 +455,220 @@ def _gsccca_search_county(driver, county: str, days_back: int,
     return _parse_gsccca_results(driver.page_source)[:max_rows]
 
 
+def _ga_load_checkpoint() -> dict:
+    try:
+        if GA_CHECKPOINT_FILE.exists():
+            return json.loads(GA_CHECKPOINT_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _ga_save_checkpoint(cp: dict):
+    try:
+        GA_CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        GA_CHECKPOINT_FILE.write_text(json.dumps(cp, indent=2, default=str))
+    except Exception:
+        pass
+
+
+def _gsccca_search_prefix(driver, county: str, prefix: str,
+                          days_back: int) -> list:
+    """One GSCCCA Federal Tax Lien search for txtSearchName=<prefix> in <county>.
+    Returns parsed rows (each {name, date, file_number})."""
+    from selenium.webdriver.common.by import By
+    driver.get(GSCCCA_SEARCH_URL)
+    time.sleep(1.5)
+    if driver.find_elements(By.NAME, "txtPassword"):
+        _ga_save_debug(driver, f"prefix_{county}_{prefix}_needs_login")
+        return []
+    _ga_apply_search_params(driver, instr_value=GSCCCA_INSTR_FTL,
+                            party=GSCCCA_PARTY_DEBTOR, county=county,
+                            set_dates=True, days_back=days_back, name=prefix)
+    _ga_click_search(driver)
+    time.sleep(3)
+    # GSCCCA may pop an alert (e.g. "too many results, narrow your search").
+    try:
+        alert = driver.switch_to.alert
+        print(f"      [{county}/{prefix}] alert: {alert.text[:100]}")
+        alert.accept()
+        time.sleep(1)
+    except Exception:
+        pass
+    return _parse_gsccca_results(driver.page_source)
+
+
+# ── Search-form debugger ───────────────────────────────────────────────────────
+def _ga_apply_search_params(driver, instr_value=None, instr_text=None,
+                            party=None, county=None, set_dates=True,
+                            days_back=3650, name=""):
+    """Set the GSCCCA lien-search form fields. county=None/'-1' => all counties."""
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import Select
+
+    def setsel(nm, value=None, text=None) -> bool:
+        els = driver.find_elements(By.NAME, nm)
+        if not els:
+            return False
+        try:
+            s = Select(els[0])
+            if value is not None:
+                s.select_by_value(value)
+            elif text is not None:
+                s.select_by_visible_text(text)
+            return True
+        except Exception:
+            return False
+
+    ok = False
+    if instr_value is not None:
+        ok = setsel("txtInstrCode", value=instr_value)
+    if not ok and instr_text is not None:
+        ok = setsel("txtInstrCode", text=instr_text)
+    if party is not None:
+        setsel("txtPartyType", value=party)
+    setsel("MaxRows", value="100")
+    if county in (None, "", "ALL", "-1"):
+        setsel("intCountyID", value="-1")
+    elif not setsel("intCountyID", text=county.upper()):
+        setsel("intCountyID", text=county)
+
+    for el in driver.find_elements(By.NAME, "txtSearchName"):
+        el.clear()
+        if name:
+            el.send_keys(name)
+    for nm in ("txtFromDate", "txtToDate"):
+        for el in driver.find_elements(By.NAME, nm):
+            el.clear()
+    if set_dates:
+        today = date.today()
+        frm = today - timedelta(days=days_back)
+        for nm, val in (("txtFromDate", frm.strftime("%m/%d/%Y")),
+                        ("txtToDate", today.strftime("%m/%d/%Y"))):
+            for el in driver.find_elements(By.NAME, nm):
+                el.send_keys(val)
+
+
+def _ga_form_state(driver):
+    """Read the lien-search form's action + the exact field values that will be
+    POSTed (selected option values, checked radios, text inputs)."""
+    return driver.execute_script("""
+        var anchor = document.getElementsByName('txtInstrCode')[0];
+        var f = anchor ? anchor.form : (document.forms.length ? document.forms[0] : null);
+        if (!f) return null;
+        var out = {};
+        for (var i = 0; i < f.elements.length; i++) {
+            var el = f.elements[i];
+            if (!el.name) continue;
+            if ((el.type === 'radio' || el.type === 'checkbox') && !el.checked) continue;
+            out[el.name] = el.value;
+        }
+        return {action: f.action, method: (f.method || 'get').toUpperCase(), params: out};
+    """)
+
+
+def _ga_click_search(driver):
+    from selenium.webdriver.common.by import By
+    btns = driver.find_elements(
+        By.CSS_SELECTOR, "input[value='Search'], input[type='submit'][value='Search']")
+    if btns:
+        try:
+            btns[0].click()
+            return
+        except Exception:
+            pass
+    try:
+        driver.find_element(By.NAME, "txtInstrCode").submit()
+    except Exception:
+        pass
+
+
+def debug_ga_search(county: str = "Fulton"):
+    """Visible-browser GSCCCA search debugger (--debug). Loads the saved session,
+    pauses on the first attempt so the form state can be inspected, then runs a
+    set of parameter variations — printing the exact POST URL+params and saving
+    each raw response to data/data_engine/ga_debug/."""
+    from selenium.webdriver.common.by import By
+    GA_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Confirm the prefix-sweep approach: search txtSearchName="A" for the county.
+    variations = [
+        ("prefixA_instr3_party1_dates", dict(instr_value="3", party="1",
+                                             county=county, name="A", set_dates=True)),
+        ("prefixA_no_dates",            dict(instr_value="3", party="1",
+                                             county=county, name="A", set_dates=False)),
+        ("prefixA_party2_all",          dict(instr_value="3", party="2",
+                                             county=county, name="A", set_dates=False)),
+    ]
+
+    driver = _ga_get_driver(headless=False)
+    try:
+        if not (_ga_load_cookies(driver) and _ga_session_valid(driver)):
+            print("  No valid saved session — run `--save-session` first.")
+            return
+        print("  Authenticated via saved session.\n")
+
+        for i, (label, kw) in enumerate(variations):
+            driver.get(GSCCCA_SEARCH_URL)
+            time.sleep(2)
+            if driver.find_elements(By.NAME, "txtPassword"):
+                print(f"  [{label}] redirected to login — session expired.")
+                break
+            _ga_apply_search_params(driver, **kw)
+            fs = _ga_form_state(driver) or {}
+            print("=" * 70)
+            print(f"  ATTEMPT {i + 1}/{len(variations)}: {label}")
+            print(f"  POST {fs.get('method','POST')} -> {fs.get('action','?')}")
+            print("  PARAMS:")
+            for k, v in (fs.get("params") or {}).items():
+                print(f"     {k} = {v!r}")
+
+            if i == 0:
+                print("\n  Form loaded. Check the browser. Press Enter to submit...")
+                try:
+                    input()
+                except EOFError:
+                    print("  (no interactive stdin — submitting anyway)")
+
+            _ga_click_search(driver)
+            time.sleep(5)
+            try:
+                alert = driver.switch_to.alert
+                print(f"  ALERT: {alert.text[:140]}")
+                alert.accept()
+                time.sleep(1)
+            except Exception:
+                pass
+
+            html = driver.page_source
+            fn = (GA_DEBUG_DIR / "search_response.html") if i == 0 \
+                else (GA_DEBUG_DIR / f"search_response_{label}.html")
+            fn.write_text(html, encoding="utf-8", errors="replace")
+            try:
+                driver.save_screenshot(str(fn.with_suffix(".png")))
+            except Exception:
+                pass
+            rows = _parse_gsccca_results(html)
+            print(f"  RESULT url: {driver.current_url}")
+            print(f"  saved -> {fn.relative_to(LEADFLOW_DIR)}  "
+                  f"({len(html):,} bytes) | parser found {len(rows)} rows")
+            low = html.lower()
+            for hint in ("no records", "no results", "please enter", "must enter",
+                         "required", "exceeded", "too many", "no matches",
+                         "invalid", "not authorized", "session"):
+                if hint in low:
+                    print(f"     response mentions: {hint!r}")
+            if i == 0:
+                print("\n  ----- RAW RESPONSE (first 4000 chars) -----")
+                print(html[:4000])
+                print("  ----- END RAW RESPONSE -----\n")
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
 _DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
 
 
@@ -441,7 +701,15 @@ def _parse_gsccca_results(html: str) -> list[dict]:
             low = name.lower()
             if low.startswith(("name", "party", "grantor", "grantee", "instrument")):
                 continue
-            out.append({"name": name.strip(), "date": m.group(0)})
+            # file/instrument number: a numeric (book/page/instrument) token.
+            fn = ""
+            for c in cells:
+                t = c.strip()
+                if re.fullmatch(r"\d{3,}([-/]\d+)*", t):
+                    fn = t
+                    break
+            out.append({"name": name.strip(), "date": m.group(0),
+                        "file_number": fn})
     except Exception:
         pass
     return out
@@ -459,7 +727,7 @@ def _to_iso_date(s):
     return None
 
 
-def _store_ga_liens(rows: list[dict]) -> int:
+def _store_ga_liens(rows: list[dict], quiet: bool = False) -> int:
     conn = get_connection()
     conn.autocommit = False
     added = 0
@@ -470,9 +738,11 @@ def _store_ga_liens(rows: list[dict]) -> int:
                 continue
             county_name = (rec.get("county") or "Fulton").strip() or "Fulton"
             filed = _to_iso_date(rec.get("date"))
+            # Dedup key: prefer the file/instrument number when present so the
+            # same lien collapses regardless of which prefix surfaced it.
+            dedup = rec.get("file_number") or f"{name.upper()}|{rec.get('date')}"
             h = hashlib.md5(
-                f"gsccca|{name.upper()}|{county_name}|{rec.get('date')}"
-                .encode()).hexdigest()
+                f"gsccca|{county_name}|{dedup}".encode()).hexdigest()
             with conn.cursor() as cur:
                 county_id = get_or_create_county(cur, county_name, "GA")
                 cur.execute("""
@@ -490,7 +760,8 @@ def _store_ga_liens(rows: list[dict]) -> int:
                 if cur.fetchone():
                     added += 1
             conn.commit()
-        print(f"    GA/GSCCCA: +{added} new GA liens")
+        if not quiet:
+            print(f"    GA/GSCCCA: +{added} new GA liens")
     except Exception as e:
         conn.rollback()
         print(f"    GA/GSCCCA store error: {e}")
@@ -658,10 +929,19 @@ def main():
                     help="log in manually once and save cookies for reuse (Option B)")
     ap.add_argument("--use-session", action="store_true",
                     help="reuse saved cookies and skip login (Option B)")
+    ap.add_argument("--debug", action="store_true",
+                    help="visible-browser search debugger: load saved session, "
+                         "pause before submit, try parameter variations, dump "
+                         "the POST params + raw response HTML")
     ap.add_argument("--licenses", action="store_true",
                     help="run the GA SOS license scrape instead of liens")
     args = ap.parse_args()
 
+    if args.debug:
+        first_county = (args.counties.split(",")[0].strip()
+                        if args.counties else "Fulton")
+        debug_ga_search(county=first_county)
+        return
     if args.save_session:
         ok = save_ga_session()
         print(f"\nGA session {'saved' if ok else 'NOT saved'}.")
