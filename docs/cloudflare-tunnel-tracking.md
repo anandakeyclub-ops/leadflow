@@ -1,7 +1,11 @@
-# Email Open/Click Tracking — Cloudflare Tunnel (stable, replaces ngrok)
+# Email Open/Click Tracking — Cloudflare Tunnel (PAUSED / alternative)
 
-**Status: SETUP RUNBOOK — not yet cut over.** `.env` still points at ngrok.
-Do not cut over until the test at the bottom passes.
+> **PAUSED 2026-06-14.** Not needed. The active solution is the ngrok **reserved
+> static domain** (`deflator-rover-outtakes.ngrok-free.dev`), already configured and
+> verified — see `email-tracking.md`. That fixes URL stability with zero DNS/Cloudflare
+> changes. Keep this runbook only as a fallback if ngrok is ever dropped.
+
+**Status: SETUP RUNBOOK — not cut over.** `.env` points at the ngrok static domain.
 
 ## Why this design
 
