@@ -284,20 +284,14 @@ def stable_choice(options: list[str], seed_parts: list[object]) -> tuple[str, in
 
 SUBJECT_LINES: dict[int, list[str]] = {
     # Step 1: public-record awareness / curiosity.
-    # Keep these human, short, and non-marketing. Avoid spammy urgency.
+    # WINNER ONLY. "Quick question about your {county} County filing" tested at
+    # 17.2% open vs 0-8% for every other variant (and 0% on 100+ sends for
+    # "Hillsborough County filing" / "Regarding the IRS federal tax lien in
+    # Miami..."). Per data, step 1 no longer rotates — every contact gets the
+    # winner, personalized by county. choose_subject() handles the no-county
+    # fallback and avoids "County County" duplication.
     1: [
-        "Your name appeared in a recent public filing",
-        "Question about a public filing",
-        "{county} filing review",
-        "{county} County public record review",
-        "Public record notice for {county} County",
-        "Federal tax lien question",
-        "Have you already resolved this?",
-        "Did anyone help you with this yet?",
-        "Can I ask a quick question?",
-        "Still dealing with this tax issue?",
-        "Question about your public filing",
-        "Possible IRS lien options",
+        "Quick question about your {county} County filing",
     ],
     # Step 2: soft follow-up / credibility.
     2: [
@@ -366,8 +360,26 @@ CTA_LABELS = [
 
 
 def choose_subject(step: int, lead: dict, first_name: str, county: str, trade: str) -> tuple[str, str]:
+    # Normalize county: strip a trailing "County" so the templates' " County"
+    # suffix never doubles ("Miami-Dade County" -> "Miami-Dade"), and treat the
+    # build_email placeholder ("your county") / blanks as "no county".
+    raw = (county or "").strip()
+    if raw.lower() in ("", "your county", "your", "unknown", "none"):
+        county_clean = ""
+    elif raw.lower().endswith("county"):
+        county_clean = raw[:-6].strip()
+    else:
+        county_clean = raw
+
+    # Step 1: force the proven winner (17.2% open). Personalized by county for
+    # every contact; clean fallback when county is unknown.
+    if step == 1:
+        if county_clean:
+            return f"Quick question about your {county_clean} County filing", "s1_v1"
+        return "Quick question about your tax filing", "s1_v1_nc"
+
     template, idx = stable_choice(SUBJECT_LINES[step], [lead.get("lead_id"), lead.get("email"), step, CAMPAIGN_ID])
-    subject = template.format(first_name=first_name, county=county or "your", trade=trade)
+    subject = template.format(first_name=first_name, county=county_clean or "your", trade=trade)
     # Avoid ugly "there," subject.
     subject = subject.replace("there, quick question", "Quick question")
     return subject, f"s{step}_v{idx+1}"
