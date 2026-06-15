@@ -33,12 +33,16 @@ from scripts.data_engine.data_collector import (  # noqa: E402
 from app.core.db import close_all  # noqa: E402
 
 # Monday=0 ... Sunday=6
+# Only states with a working collection source are in the rotation. CA/NC/OH/PA
+# were removed (no scraper wired — they showed as ❌ in the weekly calendar).
+# Working: FL, TX (dedicated scrapers), AZ (Maricopa), IL (CourtListener),
+# GA (GSCCCA via saved session).
 DAILY_STATES = {
     0: ["fl", "ga"],   # Monday
-    1: ["tx", "nc"],   # Tuesday
-    2: ["az", "il"],   # Wednesday
-    3: ["ca", "oh"],   # Thursday
-    4: ["ny", "pa"],   # Friday
+    1: ["tx", "il"],   # Tuesday
+    2: ["az", "ga"],   # Wednesday
+    3: ["fl", "tx"],   # Thursday
+    4: ["az", "il"],   # Friday
     5: ["fl", "tx"],   # Saturday
     6: [],             # Sunday
 }
