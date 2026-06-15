@@ -31,8 +31,30 @@ import random
 from datetime import date, datetime
 from pathlib import Path
 
-BASE         = Path(__file__).resolve().parent
-HISTORY_FILE = BASE / "data" / "blog_publish_history.json"
+BASE         = Path(__file__).resolve().parent          # scripts/maintenance
+REPO_ROOT    = BASE.parent.parent                        # leadflow repo root
+HISTORY_FILE = REPO_ROOT / "data" / "blog_publish_history.json"
+
+# generate_topic_blogs.py was relocated from the repo root into scripts/archive/
+# by the "organize untracked files" commit (bc3803d). It writes to content/ and
+# loads .env relative to the repo root, so it must run with cwd=REPO_ROOT. Resolve
+# its path by searching known locations so a future move can't silently break the
+# daily blog again.
+def _find_generator() -> Path:
+    candidates = [
+        REPO_ROOT / "scripts" / "archive" / "generate_topic_blogs.py",
+        REPO_ROOT / "scripts" / "maintenance" / "generate_topic_blogs.py",
+        REPO_ROOT / "generate_topic_blogs.py",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    raise FileNotFoundError(
+        "generate_topic_blogs.py not found in any known location: "
+        + ", ".join(str(c) for c in candidates)
+    )
+
+GENERATOR = _find_generator()
 
 # ── All available national topic slugs ───────────────────────────────────────
 TOPIC_SLUGS = [
@@ -197,7 +219,7 @@ def run_cmd(cmd: list, label: str, dry_run: bool = False) -> bool:
         return True
     print(f"{'='*55}\n")
     result = subprocess.run(
-        cmd, cwd=str(BASE),
+        cmd, cwd=str(REPO_ROOT),
         text=True,
         timeout=300,
     )
@@ -222,7 +244,7 @@ def main():
     logger = None
     if not args.dry_run:
         try:
-            sys.path.insert(0, str(BASE.parent.parent))  # repo root for pipeline_log
+            sys.path.insert(0, str(REPO_ROOT))  # repo root for pipeline_log
             from pipeline_log import PipelineLogger
             logger = PipelineLogger("blog")
             logger.start()
@@ -259,7 +281,7 @@ def main():
 
             post_kind = "national_topic"
             print(f"\n  Next topic slug: {slug}")
-            cmd = [python, "generate_topic_blogs.py", "--slug", slug]
+            cmd = [python, str(GENERATOR), "--slug", slug]
             if args.dry_run:
                 cmd.append("--dry-run")
 
@@ -281,7 +303,7 @@ def main():
 
             post_kind = "state"
             print(f"\n  Next state: {state.title()} | topic: {topic_suffix}")
-            cmd = [python, "generate_topic_blogs.py", "--slug", full_slug]
+            cmd = [python, str(GENERATOR), "--slug", full_slug]
             if args.dry_run:
                 cmd.append("--dry-run")
 
