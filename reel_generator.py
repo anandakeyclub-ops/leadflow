@@ -1995,6 +1995,10 @@ def _media_url_ok(url: str, timeout: float = 6.0) -> bool:
         return False
 
 
+# TODO: Replace with shared_media.pexels_client.search_videos() once
+# the shared Pexels media layer (being built in PermitMap) is available.
+# SHARED_MEDIA_ROOT should point to ../shared-media/ for cross-project caching.
+# See: scripts/shared_media/pexels_client.py (PermitMap repo)
 def _pexels_video_url(query: str) -> str:
     """Portrait stock video link from Pexels (requires PEXELS_API_KEY)."""
     if not PEXELS_API_KEY:
