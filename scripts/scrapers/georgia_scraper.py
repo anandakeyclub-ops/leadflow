@@ -71,8 +71,74 @@ GA_SESSION_FILE    = LEADFLOW_DIR / "data" / "data_engine" / "ga_session.json"
 # names in advance.
 GA_PREFIXES        = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + [str(d) for d in range(10)]
 GA_MAX_TOTAL       = 5000      # cap per full run, across all counties
-GA_PREFIX_DELAY    = 1.5       # seconds between prefix searches
+GA_PREFIX_DELAY    = 1.5       # seconds between searches
 GA_CHECKPOINT_FILE = LEADFLOW_DIR / "data" / "data_engine" / "ga_checkpoint.json"
+
+# GSCCCA requires a >=3-character name and caps each search at 100 rows (MaxRows),
+# so single-letter prefix sweeps return 0. We enumerate by common US surnames
+# instead. Configurable: drop a newline-delimited list at GA_SURNAMES_FILE to
+# override/expand (e.g. to the full Census top-500+).
+GA_SURNAMES_FILE   = LEADFLOW_DIR / "data" / "data_engine" / "ga_surnames.txt"
+GA_SURNAMES = [
+    "SMITH","JOHNSON","WILLIAMS","BROWN","JONES","GARCIA","MILLER","DAVIS",
+    "RODRIGUEZ","MARTINEZ","HERNANDEZ","LOPEZ","GONZALEZ","WILSON","ANDERSON",
+    "THOMAS","TAYLOR","MOORE","JACKSON","MARTIN","LEE","PEREZ","THOMPSON",
+    "WHITE","HARRIS","SANCHEZ","CLARK","RAMIREZ","LEWIS","ROBINSON","WALKER",
+    "YOUNG","ALLEN","KING","WRIGHT","SCOTT","TORRES","NGUYEN","HILL","FLORES",
+    "GREEN","ADAMS","NELSON","BAKER","HALL","RIVERA","CAMPBELL","MITCHELL",
+    "CARTER","ROBERTS","GOMEZ","PHILLIPS","EVANS","TURNER","DIAZ","PARKER",
+    "CRUZ","EDWARDS","COLLINS","REYES","STEWART","MORRIS","MORALES","MURPHY",
+    "COOK","ROGERS","GUTIERREZ","ORTIZ","MORGAN","COOPER","PETERSON","BAILEY",
+    "REED","KELLY","HOWARD","RAMOS","KIM","COX","WARD","RICHARDSON","WATSON",
+    "BROOKS","CHAVEZ","WOOD","JAMES","BENNETT","GRAY","MENDOZA","RUIZ","HUGHES",
+    "PRICE","ALVAREZ","CASTILLO","SANDERS","PATEL","MYERS","LONG","ROSS",
+    "FOSTER","JIMENEZ","POWELL","JENKINS","PERRY","RUSSELL","SULLIVAN","BELL",
+    "COLEMAN","BUTLER","HENDERSON","BARNES","GONZALES","FISHER","VASQUEZ",
+    "SIMMONS","ROMERO","JORDAN","PATTERSON","ALEXANDER","HAMILTON","GRAHAM",
+    "REYNOLDS","GRIFFIN","WALLACE","MORENO","WEST","COLE","HAYES","BRYANT",
+    "HERRERA","GIBSON","ELLIS","TRAN","MEDINA","AGUILAR","STEVENS","MURRAY",
+    "FORD","CASTRO","MARSHALL","OWENS","HARRISON","FERNANDEZ","MCDONALD",
+    "WOODS","WASHINGTON","KENNEDY","WELLS","VARGAS","HENRY","CHEN","FREEMAN",
+    "WEBB","TUCKER","GUZMAN","BURNS","CRAWFORD","OLSON","SIMPSON","PORTER",
+    "HUNTER","GORDON","MENDEZ","SILVA","SHAW","SNYDER","MASON","DIXON","MUNOZ",
+    "HUNT","HICKS","HOLMES","PALMER","WAGNER","BLACK","ROBERTSON","BOYD","ROSE",
+    "STONE","SALAZAR","FOX","WARREN","MILLS","MEYER","RICE","SCHMIDT","GARZA",
+    "DANIELS","FERGUSON","NICHOLS","STEPHENS","SOTO","WEAVER","RYAN","GARDNER",
+    "PAYNE","GRANT","DUNN","KELLEY","SPENCER","HAWKINS","ARNOLD","PIERCE",
+    "VAZQUEZ","HANSEN","PETERS","SANTOS","HART","BRADLEY","KNIGHT","ELLIOTT",
+    "CUNNINGHAM","DUNCAN","ARMSTRONG","HUDSON","CARROLL","LANE","RILEY",
+    "ANDREWS","ALVARADO","RAY","DELGADO","BERRY","PERKINS","HOFFMAN","JOHNSTON",
+    "MATTHEWS","PENA","RICHARDS","CONTRERAS","WILLIS","CARPENTER","LAWRENCE",
+    "SANDOVAL","GUERRERO","GEORGE","CHAPMAN","RIOS","ESTRADA","ORTEGA","WATKINS",
+    "GREENE","NUNEZ","WHEELER","VALDEZ","HARPER","BURKE","LARSON","SANTIAGO",
+    "MALDONADO","MORRISON","FRANKLIN","CARLSON","AUSTIN","DOMINGUEZ","CARR",
+    "LAWSON","JACOBS","OBRIEN","LYNCH","SINGH","VEGA","BISHOP","MONTGOMERY",
+    "OLIVER","JENSEN","HARVEY","WILLIAMSON","GILBERT","DEAN","SIMS","ESPINOZA",
+    "HOWELL","WONG","REID","HANSON","MCCOY","GARRETT","BURTON","FULLER","WANG",
+    "WEBER","WELCH","ROJAS","LUCAS","MARQUEZ","FIELDS","PARK","YANG","LITTLE",
+    "BANKS","PADILLA","DAY","WALSH","BOWMAN","SCHULTZ","LUNA","FOWLER","MEJIA",
+]
+
+
+def load_ga_surnames() -> list:
+    """Surname search terms. Loads GA_SURNAMES_FILE (one per line, '#' comments)
+    if present so the list is configurable/expandable to the full Census top-500+;
+    otherwise the built-in list. All terms are upper-cased and >=3 chars."""
+    names = GA_SURNAMES
+    if GA_SURNAMES_FILE.exists():
+        try:
+            loaded = [ln.strip() for ln in GA_SURNAMES_FILE.read_text(encoding="utf-8").splitlines()
+                      if ln.strip() and not ln.lstrip().startswith("#")]
+            if loaded:
+                names = loaded
+        except Exception:
+            pass
+    out, seen = [], set()
+    for n in names:
+        n = n.strip().upper()
+        if len(n) >= 3 and n not in seen:
+            seen.add(n); out.append(n)
+    return out
 
 # Contractor entity types we care about (search keywords).
 GA_CONTRACTOR_KEYWORDS = [
@@ -85,7 +151,8 @@ GA_CONTRACTOR_KEYWORDS = [
 def collect_ga_liens(limit: int = GA_MAX_TOTAL, counties: list | None = None,
                      days_back: int = 3650, dry_run: bool = False,
                      headless: bool = True, manual: bool = False,
-                     use_session: bool = False) -> int:
+                     use_session: bool = False, surnames: list | None = None,
+                     limit_surnames: int | None = None) -> int:
     """
     Federal Tax Lien (instrument code 3) search on GSCCCA per county
     (default Fulton, Gwinnett, DeKalb, Cobb), parsed into normalized_liens
@@ -132,34 +199,56 @@ def collect_ga_liens(limit: int = GA_MAX_TOTAL, counties: list | None = None,
                 return 0
             print("    GA/GSCCCA: logged in.")
 
-        # A-Z + 0-9 name-prefix sweep with resume + dedup by file_number.
-        cp = _ga_load_checkpoint()
-        seen = set(cp.get("seen_file_numbers", []))
-        progress = cp.get("progress", {})
+        # Top-surname enumeration (GSCCCA needs >=3-char names; single letters
+        # return 0). Dedup by file_number when present, else debtor name + county
+        # (the list page exposes no book/page/date). --test-surnames runs do NOT
+        # touch the resume checkpoint so validation can't corrupt a full sweep.
+        terms = [t for t in (surnames if surnames is not None else load_ga_surnames())
+                 if len((t or "").strip()) >= 3]
+        terms = [t.strip().upper() for t in terms]
+        if limit_surnames:
+            terms = terms[:limit_surnames]
+        use_checkpoint = surnames is None
+        cp = _ga_load_checkpoint() if use_checkpoint else {}
+        seen = set(cp.get("seen_keys", []))
+        progress = cp.get("progress", {}) if use_checkpoint else {}
+        capped: list[str] = []
         run_limit = min(limit, GA_MAX_TOTAL)
+        print(f"    GA/GSCCCA: enumerating {len(terms)} surnames x "
+              f"{len(counties)} counties (checkpoint={'on' if use_checkpoint else 'off (test)'}).")
         stop = False
         for county in counties:
             if stop:
                 break
             done = progress.get(county)
-            start = (GA_PREFIXES.index(done) + 1) if done in GA_PREFIXES else 0
+            start = (terms.index(done) + 1) if done in terms else 0
             if start:
-                print(f"    GA/GSCCCA: resuming {county} after prefix '{done}'.")
-            for prefix in GA_PREFIXES[start:]:
+                print(f"    GA/GSCCCA: resuming {county} after surname '{done}'.")
+            for term in terms[start:]:
                 if collected >= run_limit:
                     print(f"    GA/GSCCCA: run cap {run_limit} reached — stopping.")
                     stop = True
                     break
                 try:
-                    rows = _gsccca_search_prefix(driver, county, prefix, days_back)
+                    rows = _gsccca_search_prefix(driver, county, term, days_back)
                 except Exception as e:
-                    print(f"      [{county}/{prefix}] error: "
+                    print(f"      [{county}/{term}] error: "
                           f"{type(e).__name__}: {str(e)[:140]}")
                     rows = []
+                # MaxRows=100 cap: >=100 means this surname/county truncated and
+                # has more liens than we captured (narrow the date range to get all).
+                is_capped = len(rows) >= 100
+                if is_capped:
+                    capped.append(f"{county}/{term}")
+                    print(f"    [CAPPED] {county} / {term}: {len(rows)} results "
+                          f"(>=100 MaxRows — more exist)")
                 new_rows = []
                 for r in rows:
+                    name = (r.get("name") or "").strip()
+                    if len(name) < 3:
+                        continue
                     key = (r.get("file_number")
-                           or f"{r.get('name','')}|{r.get('date','')}|{county}")
+                           or f"{name.upper()}|{r.get('date','')}|{county}")
                     if key in seen:
                         continue
                     seen.add(key)
@@ -170,17 +259,22 @@ def collect_ga_liens(limit: int = GA_MAX_TOTAL, counties: list | None = None,
                     collected += len(new_rows)
                     if not dry_run:
                         total_stored += _store_ga_liens(new_rows, quiet=True)
-                print(f"    {county} / {prefix} -> {len(rows)} results "
+                print(f"    {county} / {term} -> {len(rows)} results "
                       f"({collected} new this run, {len(seen)} total)")
-                # Checkpoint AFTER this prefix's rows are stored, so a resume
-                # never skips a prefix whose data wasn't saved.
-                progress[county] = prefix
-                _ga_save_checkpoint({
-                    "seen_file_numbers": sorted(seen)[-20000:],
-                    "progress": progress,
-                    "updated": datetime.now().isoformat(timespec="seconds"),
-                })
+                if use_checkpoint:
+                    # Checkpoint AFTER storage so a resume never skips a surname
+                    # whose data wasn't saved.
+                    progress[county] = term
+                    _ga_save_checkpoint({
+                        "seen_keys": sorted(seen)[-50000:],
+                        "progress": progress,
+                        "capped": capped[-2000:],
+                        "updated": datetime.now().isoformat(timespec="seconds"),
+                    })
                 time.sleep(GA_PREFIX_DELAY)
+        if capped:
+            print(f"    GA/GSCCCA: {len(capped)} capped search(es) hit the 100-row "
+                  f"limit — those surnames/counties have more liens than captured.")
     except Exception as e:
         print(f"    GA/GSCCCA selenium error: {type(e).__name__}: {str(e)[:200]}")
     finally:
@@ -977,6 +1071,12 @@ def main():
                          "the POST params + raw response HTML")
     ap.add_argument("--licenses", action="store_true",
                     help="run the GA SOS license scrape instead of liens")
+    ap.add_argument("--limit-surnames", type=int, default=None,
+                    help="cap how many surnames to sweep (partial/validation runs)")
+    ap.add_argument("--test-surnames", default=None,
+                    help="comma list of surnames to search instead of the full list "
+                         "(validation; skips the resume checkpoint). "
+                         "e.g. SMITH,BROWN,JOHNSON,WILLIAMS")
     args = ap.parse_args()
 
     if args.debug:
@@ -993,10 +1093,13 @@ def main():
         return
     counties = ([c.strip() for c in args.counties.split(",") if c.strip()]
                 if args.counties else None)
+    test_surnames = ([s.strip() for s in args.test_surnames.split(",") if s.strip()]
+                     if args.test_surnames else None)
     n = collect_ga_liens(limit=args.limit, counties=counties,
                          days_back=args.days, dry_run=args.dry_run,
                          headless=not args.no_headless, manual=args.manual,
-                         use_session=args.use_session)
+                         use_session=args.use_session,
+                         surnames=test_surnames, limit_surnames=args.limit_surnames)
     tag = "(dry-run) " if args.dry_run else ""
     print(f"\nGA liens {tag}result: {n}")
 
