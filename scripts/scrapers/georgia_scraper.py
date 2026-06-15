@@ -51,6 +51,9 @@ GSCCCA_BASE        = "https://search.gsccca.org"
 GSCCCA_LIEN        = "https://search.gsccca.org/Lien/namesearch.asp"
 GSCCCA_LOGIN_URL   = "https://apps.gsccca.org/login.asp"
 GSCCCA_SEARCH_URL  = "https://search.gsccca.org/Lien/namesearch.asp"
+# Lien results endpoint (the search form's POST target). Unauthenticated it
+# redirects to apps.gsccca.org/login.asp — used as the auth-verification probe.
+GSCCCA_RESULTS_URL = "https://search.gsccca.org/Lien/liennames.asp"
 GA_SOS_SEARCH      = "https://ecorp.sos.ga.gov/BusinessSearch"
 
 # Verified GSCCCA lien-search form values (see namesearch.asp form):
@@ -228,9 +231,13 @@ def _gsccca_manual_login(driver, user: str, pw: str) -> bool:
         return False
     time.sleep(1)
     _ga_save_debug(driver, "02_after_manual_login")
-    low = driver.page_source.lower()
-    return ("log out" in low or "logout" in low or "my account" in low
-            or not driver.find_elements(By.NAME, "txtPassword"))
+    # Verify the LIEN APP itself is authenticated (not just the CMS). The old
+    # heuristic ("log out"/"my account" on the page) passed on www.gsccca.org and
+    # produced a session that couldn't view lien results.
+    ok = _ga_lien_authenticated(driver)
+    print(f"    GA/GSCCCA: lien-app authenticated after login = {ok}"
+          f" ({driver.current_url})")
+    return ok
 
 
 def save_ga_session(headless: bool = False) -> bool:
@@ -253,15 +260,33 @@ def save_ga_session(headless: bool = False) -> bool:
 
 
 # ── Option B: cookie session reuse ─────────────────────────────────────────────
+# IMPORTANT: the lien app's auth cookie is set on the apps.gsccca.org domain and
+# is httpOnly. driver.get_cookies() only returns cookies for the CURRENT page's
+# domain, so capturing from www.gsccca.org (where login redirects) missed it —
+# that's why the old saved session had only CMS + analytics cookies and the lien
+# search bounced to login. We use the CDP cookie store (all domains) instead.
+_GA_COOKIE_KEYS = ("name", "value", "domain", "path", "secure", "httpOnly",
+                   "expires", "sameSite")
+
+
 def _ga_save_cookies(driver):
+    """Save every gsccca.org cookie in the browser jar (all subdomains) via CDP,
+    so the apps.gsccca.org lien-app session cookie is included."""
     try:
+        all_cookies = driver.execute_cdp_cmd("Network.getAllCookies", {}).get("cookies", [])
+        gs = [c for c in all_cookies if "gsccca.org" in (c.get("domain") or "")]
         GA_SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        cookies = driver.get_cookies()
-        GA_SESSION_FILE.write_text(json.dumps(cookies, indent=2))
-        print(f"    GA/GSCCCA: saved {len(cookies)} cookies -> "
+        GA_SESSION_FILE.write_text(json.dumps(gs, indent=2))
+        doms = sorted({c.get("domain", "") for c in gs})
+        has_apps = any("apps.gsccca.org" in d for d in doms)
+        print(f"    GA/GSCCCA: saved {len(gs)} gsccca.org cookies "
+              f"(domains: {', '.join(doms) or 'none'}) -> "
               f"data/data_engine/{GA_SESSION_FILE.name}")
+        if not has_apps:
+            print("    GA/GSCCCA: WARNING — no apps.gsccca.org cookie captured; "
+                  "the lien-app login may not have completed.")
     except Exception as e:
-        print(f"    GA/GSCCCA: could not save session: {e}")
+        print(f"    GA/GSCCCA: could not save session via CDP: {e}")
 
 
 def _ga_load_cookies(driver) -> bool:
@@ -273,32 +298,43 @@ def _ga_load_cookies(driver) -> bool:
     except Exception:
         print("    GA/GSCCCA: session file unreadable.")
         return False
-    # Must be on a gsccca.org page before add_cookie; .gsccca.org cookies then
-    # apply across the apps/search subdomains.
-    driver.get("https://www.gsccca.org/")
-    time.sleep(2)
+    # Establish a gsccca.org browsing context, then inject every cookie via CDP
+    # (sets cookies for ANY gsccca.org subdomain — incl. apps.gsccca.org — without
+    # navigating to each). Falls back to add_cookie for the current domain.
+    driver.get(GSCCCA_SEARCH_URL)
+    time.sleep(1.5)
     n = 0
     for c in cookies:
-        c.pop("sameSite", None)
+        ck = {k: c[k] for k in _GA_COOKIE_KEYS if k in c and c[k] not in (None, "")}
+        if ck.get("sameSite") not in ("Strict", "Lax", "None"):
+            ck.pop("sameSite", None)
         try:
-            driver.add_cookie(c)
+            driver.execute_cdp_cmd("Network.setCookie", ck)
             n += 1
         except Exception:
-            continue
-    print(f"    GA/GSCCCA: loaded {n}/{len(cookies)} saved cookies.")
+            try:
+                c.pop("sameSite", None)
+                driver.add_cookie(c)
+                n += 1
+            except Exception:
+                continue
+    print(f"    GA/GSCCCA: loaded {n}/{len(cookies)} saved cookies (CDP).")
     return n > 0
 
 
-def _ga_session_valid(driver) -> bool:
-    """Confirm the loaded cookies still authenticate the lien search."""
-    from selenium.webdriver.common.by import By
-    driver.get(GSCCCA_SEARCH_URL)
+def _ga_lien_authenticated(driver) -> bool:
+    """Verify the LIEN APP is authenticated: hit the results endpoint and confirm
+    we are NOT bounced to apps.gsccca.org/login.asp (and not the CMS 404)."""
+    driver.get(GSCCCA_RESULTS_URL)
     time.sleep(2)
-    # The search form (txtInstrCode) should be present and we should not be
-    # bounced to a login form as the page's primary content.
-    has_form = bool(driver.find_elements(By.NAME, "txtInstrCode"))
-    title = (driver.title or "").lower()
-    return has_form and "login" not in title
+    url = (driver.current_url or "").lower()
+    return "login.asp" not in url and "page-not-found" not in url
+
+
+def _ga_session_valid(driver) -> bool:
+    """Confirm the loaded cookies authenticate the lien RESULTS app (not just the
+    public search form, which loads even when unauthenticated)."""
+    return _ga_lien_authenticated(driver)
 
 
 def _ga_get_driver(headless: bool = True):
