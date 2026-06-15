@@ -139,6 +139,16 @@ COLLECTION_META = {
     "state-tax": {"path": "app/state-tax/page.tsx", "url": "/state-tax", "title": "State Tax Problem Guides", "description": "State-specific tax problem guides connected to IRS liens, notices, levies and business tax debt.", "h1": "State Tax Problem Guides", "quick": "State tax problems often overlap with federal IRS issues. Taxpayers need to understand both federal collection risks and state-specific enforcement rules."},
 }
 
+# ── IRS Data Book FY2025 figures (real, published on the site) ────────────────
+# Used by the data_visual post type. Keep in sync with the site's stats block.
+IRS_DATA_BOOK_FY2025 = {
+    "nftls_filed":            "214,099",   # new federal tax liens filed
+    "oic_acceptance_rate":    "14.1%",     # offers in compromise accepted
+    "new_installment_agmts":  "3.16M",     # new installment agreements
+    "gross_collections":      "$5.313T",   # total gross collections
+    "delinquent_accounts":    "13.1M",     # taxpayer delinquent accounts
+}
+
 AUTHORITY_SOURCES = [
     {"name": "IRS Publication 594", "url": "https://www.irs.gov/pub/irs-pdf/p594.pdf", "label": "IRS collection process"},
     {"name": "IRS Publication 1660", "url": "https://www.irs.gov/pub/irs-pdf/p1660.pdf", "label": "collection appeal rights"},
@@ -413,6 +423,9 @@ def pick_comment_trigger(post_type: str) -> str:
         "biggest_mistake":        "CHECKLIST",
         "weekly_stats":           "STATE",
         "myth_bust":              "DEAD",
+        "data_visual":            "STATE",
+        "comparison_table":       "HELP",
+        "irs_timeline":           "CP504",
     }
     key = trigger_map.get(post_type, random.choice(list(COMMENT_TRIGGERS.keys())))
     return COMMENT_TRIGGERS[key]
@@ -556,6 +569,9 @@ POST_IMAGE_MAP = {
     "public_record_breakdown":  ["documents","financial"],
     "weekly_lien_leaderboard":  ["documents","financial"],
     "weekly_stats":             ["documents","financial"],
+    "data_visual":              ["documents","financial"],
+    "comparison_table":         ["documents","small_business"],
+    "irs_timeline":             ["stress","documents"],
     "educational":              ["documents","small_business"],
     "notice":                   ["documents","stress"],
     "urgency":                  ["stress","financial"],
@@ -710,18 +726,21 @@ def get_tone_for_today() -> tuple:
     return key, TONES[key]
 
 # v7 schedule: 40% story, 25% public record, 20% myth, 15% education
+# Each day holds one or more post types; alternates are added without replacing
+# the existing primary so a day can rotate between formats (random.choice picks one).
 WEEKLY_SCHEDULE = {
-    0: "tax_horror_story",      # Monday: horror story — highest reach day
-    1: "weekly_lien_leaderboard", # Tuesday: public record intelligence
-    2: "myth_bust",             # Wednesday: myth destruction
-    3: "notice",                # Thursday: education/notice
-    4: "contractor_disaster",   # Friday: contractor story
-    5: "public_record_breakdown",# Saturday: public record
-    6: "success_story",         # Sunday: success/resolution
+    0: ["tax_horror_story", "irs_timeline"],         # Monday: horror story + IRS escalation timeline
+    1: ["weekly_lien_leaderboard", "data_visual"],   # Tuesday: public record intel + IRS stat infographic
+    2: ["myth_bust"],                                # Wednesday: myth destruction
+    3: ["notice", "comparison_table"],               # Thursday: education/notice + resolution comparison
+    4: ["contractor_disaster"],                      # Friday: contractor story
+    5: ["public_record_breakdown"],                  # Saturday: public record
+    6: ["success_story"],                            # Sunday: success/resolution
 }
 
 def get_post_type_for_today() -> str:
-    return WEEKLY_SCHEDULE.get(date.today().weekday(), "tax_horror_story")
+    options = WEEKLY_SCHEDULE.get(date.today().weekday(), ["tax_horror_story"])
+    return random.choice(options)
 
 def get_viral_hook(category: str = None, context: dict = None) -> str:
     if category and category in HOOKS:
@@ -1122,6 +1141,9 @@ def generate_ai_post(post_type: str, context: dict,
         "contractor_confession":    "insider",
         "myth_bust":                "contrarian",
         "biggest_mistake":          "uncomfortable_truth",
+        "data_visual":              "shocking_fact",
+        "comparison_table":         "contrarian",
+        "irs_timeline":             "uncomfortable_truth",
         "weekly_stats":             "shocking_fact",
         "educational":              "shocking_fact",
         "notice":                   "shocking_fact",
@@ -1363,6 +1385,60 @@ Make them feel understood before you explain anything.
 End with: "{comment_cta}"
 {platform_instr}
 130-160 words. Return ONLY the post text.{avoid}""",
+
+        "data_visual": f"""{persona}
+Write a {platform} post — an IRS stat-driven, text-based infographic.
+{platform} does not render HTML or charts, so build the "infographic" out of plain-text
+spacing and symbols (│ ─ ▓ █ ▶ • ► ┃ ▸) so it READS like a visual breakdown.
+Week: {week_of}. {state_name}. {state_url} | {PHONE}
+Hook (use or riff): "{viral_hook}" — the FIRST line must be a single shocking stat.
+Use ONLY these real IRS Data Book FY2025 figures (do NOT invent or round differently):
+- {IRS_DATA_BOOK_FY2025["nftls_filed"]} new federal tax liens filed
+- {IRS_DATA_BOOK_FY2025["oic_acceptance_rate"]} Offer in Compromise acceptance rate
+- {IRS_DATA_BOOK_FY2025["new_installment_agmts"]} new installment agreements
+- {IRS_DATA_BOOK_FY2025["gross_collections"]} gross collections
+- {IRS_DATA_BOOK_FY2025["delinquent_accounts"]} taxpayer delinquent accounts
+Structure: shocking stat hook → 2-3 lines of context (what these numbers mean for one
+regular taxpayer) → a visual breakdown using spacing/symbols to simulate an infographic
+in plain text → a clear CTA.
+End with: "{comment_cta}"
+{platform_instr}
+130-170 words. Return ONLY the post text.{avoid}""",
+
+        "comparison_table": f"""{persona}
+Write a {platform} post — a side-by-side comparison of two IRS resolution options.
+{platform} does not render HTML tables, so use emoji column headers and short, aligned
+text rows so it reads like a clean two-column table on mobile.
+Week: {week_of}. {state_name}. {state_url} | {PHONE}
+Hook (use or riff): "{viral_hook}"
+Pick 2 resolution options (Offer in Compromise, Installment Agreement, Currently Not
+Collectible, or Penalty Abatement). Generate a 4-5 row comparison in this exact shape:
+✅ Offer in Compromise   | ⚠️ Installment Plan
+Settle for less          | Pay full balance
+{IRS_DATA_BOOK_FY2025["oic_acceptance_rate"]} approval        | Almost always approved
+Takes 6-12 months        | Starts in days
+Best if: can't pay       | Best if: can pay over time
+Use accurate, real trade-offs. Keep each cell short so the columns line up.
+End with EXACTLY: "Which fits your situation? Comment below."
+{platform_instr}
+120-160 words. Return ONLY the post text.{avoid}""",
+
+        "irs_timeline": f"""{persona}
+Write a {platform} post — a chronological escalation story: exactly what happens if you
+ignore an IRS notice, from day 1 to collections. Emotional urgency throughout.
+Week: {week_of}. {state_name}. {state_url} | {PHONE}
+Hook (use or riff): "{viral_hook}"
+Format as dated/numbered steps, one emoji per line, using real notice names and real
+dollar thresholds where relevant. Shape:
+Day 1: CP14 notice arrives 📬
+Day 30: CP503 — second notice ⚠️
+Day 60: CP504 — intent to levy 🔴
+Day 90+: Bank account frozen 🏦
+Day 180+: Wage garnishment starts 💸
+Make each stage land emotionally — the reader should recognize exactly where they are.
+End with EXACTLY: "Which stage are you at? DM me."
+{platform_instr}
+130-170 words. Return ONLY the post text.{avoid}""",
 
         "urgency": f"""{persona}
 Write a {platform} post about the emotional cost of ignoring IRS debt.
@@ -2402,6 +2478,8 @@ def main():
         "contractor-disaster","tax-horror-story","biggest-mistake",
         "public-record-breakdown","weekly-lien-leaderboard","contractor-confession",
         "irs-story","bank-levy-story","payroll-tax-trap","biggest-lien-of-the-week",
+        # v9 new
+        "data-visual","comparison-table","irs-timeline",
     ]
 
     parser = argparse.ArgumentParser(description="TaxCase Review Social Poster v9 (Content Authority Engine)")
@@ -2504,6 +2582,9 @@ def main():
         "bank-levy-story":          "bank_levy_story",
         "payroll-tax-trap":         "payroll_tax_trap",
         "biggest-lien-of-the-week": "biggest_lien_of_the_week",
+        "data-visual":              "data_visual",
+        "comparison-table":         "comparison_table",
+        "irs-timeline":             "irs_timeline",
     }
 
     if args.auto:
