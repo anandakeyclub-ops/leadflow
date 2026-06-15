@@ -727,43 +727,31 @@ _DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
 
 
 def _parse_gsccca_results(html: str) -> list[dict]:
-    """Parse a GSCCCA lien results page -> [{name, date}]. A row counts only if
-    it carries a filing date (MM/DD/YYYY), which filters out headers/nav/chrome."""
+    """Parse a GSCCCA lien NAME-search results page -> [{name, date, file_number}].
+
+    The results list each matching party as a radio input inside table.name_results:
+        <input type="radio" name="rdoEntityName" value="SMITH, ANDRE J">
+    The list page carries NO per-name filing date or book/page number (those live on
+    the per-name detail page reached by selecting the radio), so date/file_number are
+    left blank here. Name + county + FTL filter (state='GA') is the matchable lead
+    data the pipeline needs. (The previous date-keyed <tr> parser matched the page's
+    header/date-range text instead of the actual records -> garbage rows.)
+    """
     out: list[dict] = []
+    seen = set()
     try:
         soup = BeautifulSoup(html, "lxml")
-        for tr in soup.find_all("tr"):
-            cells = [td.get_text(" ", strip=True)
-                     for td in tr.find_all(["td", "th"])]
-            if len(cells) < 2:
-                continue
-            joined = " ".join(cells)
-            m = _DATE_RE.search(joined)
-            if not m:
-                continue  # real lien rows always have a filing date
-            # Name = first cell with >=2 alphabetic words that isn't the date.
-            name = ""
-            for c in cells:
-                if _DATE_RE.fullmatch(c.strip()):
-                    continue
-                letters = re.sub(r"[^A-Za-z ]", "", c).strip()
-                if len(letters.split()) >= 2 and len(letters) >= 5:
-                    name = c
-                    break
-            if not name:
+        for inp in soup.find_all("input", attrs={"name": "rdoEntityName"}):
+            name = (inp.get("value") or "").strip()
+            if not name or not re.search(r"[A-Za-z]", name):
                 continue
             low = name.lower()
-            if low.startswith(("name", "party", "grantor", "grantee", "instrument")):
+            if low.startswith(("name", "party", "grantor", "grantee", "select")):
                 continue
-            # file/instrument number: a numeric (book/page/instrument) token.
-            fn = ""
-            for c in cells:
-                t = c.strip()
-                if re.fullmatch(r"\d{3,}([-/]\d+)*", t):
-                    fn = t
-                    break
-            out.append({"name": name.strip(), "date": m.group(0),
-                        "file_number": fn})
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append({"name": name, "date": "", "file_number": ""})
     except Exception:
         pass
     return out
