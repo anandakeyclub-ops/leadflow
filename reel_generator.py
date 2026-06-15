@@ -2032,6 +2032,13 @@ def build_heygen_background(script_data: dict) -> dict:
     """Background for the opening scene, derived from its visual cue:
     live Pexels video (if key) -> curated verified video -> themed image -> color."""
     cue = _first_visual_cue(script_data)
+    if not cue:
+        # Parsed cues empty — fall back to the reel type's canonical opening cue
+        # so the background is still theme-matched (e.g. contractor_disaster ->
+        # contractor_truck) instead of the generic default query.
+        rt_cues = get_visual_cues_for_type(script_data.get("reel_type", ""))
+        if rt_cues:
+            cue = (rt_cues[0].get("type") or "").strip()
 
     # 1. Live, theme-matched Pexels video (only if PEXELS_API_KEY is configured)
     if PEXELS_API_KEY:
