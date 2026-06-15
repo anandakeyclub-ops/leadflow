@@ -210,8 +210,13 @@ def collect_liens(state_code: str, county: Optional[str] = None) -> int:
     if s == "az":
         return collect_liens_az_maricopa()
     if s == "ga":
+        # GSCCCA gates automated login behind a CAPTCHA, so reuse a saved browser
+        # session instead of logging in fresh each run. One-time setup:
+        #   python scripts/scrapers/georgia_scraper.py --save-session
+        # (re-run when the session expires). If no valid session exists this
+        # returns 0 with a clear message rather than failing the login.
         from scripts.scrapers.georgia_scraper import collect_ga_liens
-        return collect_ga_liens()
+        return collect_ga_liens(use_session=True)
     if s == "il":
         # Prefer CourtListener (free federal docket API, no WAF) when a token is
         # configured; otherwise fall back to the SOS UCC Selenium scraper.
