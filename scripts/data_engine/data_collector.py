@@ -97,6 +97,14 @@ MATCH_THRESHOLD = 0.55          # score >= 55 (score_lien_vs_dbpr returns 0..1)
 # Per-state overrides — TX name formats diverge more (lien=business names,
 # TDLR=person names in "LAST, FIRST"), so it needs a looser gate.
 STATE_MATCH_THRESHOLD = {"tx": 0.45}
+
+# States with NO separate license/contact universe to match liens against.
+# Their federal tax liens are filed against individuals (e.g. GA via GSCCCA:
+# "SMITH, ALEX G"), not businesses, so the FL/TX/AZ "match liens -> license DB"
+# model finds nothing. For these states the lien debtor IS the lead, so we
+# promote each lien directly into normalized_contacts and let the existing
+# PDL/CSE email enrichment + 7-touch sequence handle it downstream.
+PROMOTE_LIEN_STATES = {"ga"}
 MAX_PER_COUNTY = 500            # hard rule #5
 MIN_REQUEST_DELAY = 1.0         # hard rule #3
 PDL_API_KEY = os.getenv("PDL_API_KEY", "")
@@ -682,6 +690,55 @@ def normalize_match_name(name: str) -> str:
     return n
 
 
+def promote_liens_to_contacts(state_code: str) -> int:
+    """
+    Promote each lien debtor into normalized_contacts for states in
+    PROMOTE_LIEN_STATES (e.g. GA), where there is no license DB to match against
+    and the lien debtor is the lead itself. Sets has_lien_match=TRUE and copies
+    the lien metadata so the row flows through the same enrich -> sync -> email
+    path as license-matched contacts in FL/TX/AZ. Idempotent by lien_id.
+    Returns the count of contacts created.
+    """
+    s = state_code.upper()
+    state_name = STATE_NAMES.get(state_code.lower(), s)
+    print(f"\n  [promote_liens_to_contacts] {state_name} "
+          f"(lien debtor = lead; no license DB)")
+    conn = get_connection()
+    conn.autocommit = False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO normalized_contacts
+                    (state, state_name, county, license_source,
+                     owner_name, business_name, has_lien_match, lien_id,
+                     lien_amount, lien_filed_date, lien_county,
+                     match_score, match_method, email_confidence, data_source)
+                SELECT %s, %s, c.county_name, 'lien',
+                       nl.debtor_name, nl.business_name, TRUE, nl.id,
+                       nl.amount, nl.filed_date, c.county_name,
+                       100, 'lien_promoted', 'low', 'lien_promoted'
+                FROM normalized_liens nl
+                LEFT JOIN counties c ON c.id = nl.county_id
+                WHERE nl.state = %s
+                  AND COALESCE(nl.debtor_name, nl.business_name) IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM normalized_contacts nc
+                      WHERE nc.data_source = 'lien_promoted'
+                        AND nc.lien_id = nl.id
+                  )
+            """, (s, state_name, s))
+            n = cur.rowcount
+        conn.commit()
+        print(f"    {s}: +{n} lien debtors promoted to contacts")
+        return n
+    except Exception as e:
+        conn.rollback()
+        print(f"    {s} lien-promotion error: {e}")
+        return 0
+    finally:
+        release_connection(conn)
+
+
 def match_liens_to_licenses(state_code: str, threshold: float | None = None) -> int:
     """
     Match normalized_liens -> normalized_contacts for the same state using the
@@ -1065,6 +1122,8 @@ def run_state_collection(state_code: str,
     stats["liens"]    = _safe(collect_liens, s, county)
     stats["licenses"] = _safe(collect_licenses, s)
     stats["matched"]  = _safe(match_liens_to_licenses, s)
+    if s in PROMOTE_LIEN_STATES:
+        stats["matched"] += _safe(promote_liens_to_contacts, s)
     stats["pdl"]      = _safe(enrich_emails_pdl, s, 100)
     stats["cse"]      = _safe(enrich_emails_cse, s, 50)
     return stats
