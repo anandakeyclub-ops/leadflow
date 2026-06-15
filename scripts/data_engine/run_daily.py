@@ -36,14 +36,14 @@ from app.core.db import close_all  # noqa: E402
 # Only states with a working collection source are in the rotation. CA/NC/OH/PA
 # were removed (no scraper wired — they showed as ❌ in the weekly calendar).
 # Working: FL, TX (dedicated scrapers), AZ (Maricopa), IL (CourtListener),
-# GA (GSCCCA via saved session).
+# GA (GSCCCA via saved session), NY (ACRIS open data).
 DAILY_STATES = {
     0: ["fl", "ga"],   # Monday
     1: ["tx", "il"],   # Tuesday
-    2: ["az", "ga"],   # Wednesday
+    2: ["az", "ny"],   # Wednesday
     3: ["fl", "tx"],   # Thursday
-    4: ["az", "il"],   # Friday
-    5: ["fl", "tx"],   # Saturday
+    4: ["ga", "il"],   # Friday
+    5: ["az", "ny"],   # Saturday
     6: [],             # Sunday
 }
 
