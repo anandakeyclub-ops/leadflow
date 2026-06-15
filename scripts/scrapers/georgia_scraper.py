@@ -568,17 +568,35 @@ def _ga_form_state(driver):
 
 
 def _ga_click_search(driver):
-    from selenium.webdriver.common.by import By
-    btns = driver.find_elements(
-        By.CSS_SELECTOR, "input[value='Search'], input[type='submit'][value='Search']")
-    if btns:
-        try:
-            btns[0].click()
-            return
-        except Exception:
-            pass
+    """Submit the LIEN search form (the one containing txtInstrCode), scoped so we
+    never trigger the site-wide CMS header search box — that box has value="search"
+    and data-sf-results-url=www.gsccca.org/search-results, which is what the old
+    page-wide input[value='Search'] click was hitting (-> 0 lien results).
+
+    The lien form is name="SearchType", action=.../Lien/liennames.asp?Type=0, and
+    its Search control is an <input type="button"> driven by onclick JS. We click
+    that in-form button; if it doesn't navigate off namesearch.asp, we POST the
+    form directly to its action."""
+    driver.execute_script("""
+        var a = document.getElementsByName('txtInstrCode')[0];
+        var f = a ? a.form : null;
+        if (!f) return;
+        var btns = f.querySelectorAll("input[type=button],input[type=submit],button");
+        for (var i = 0; i < btns.length; i++) {
+            var lbl = (btns[i].value || btns[i].textContent || '').trim().toLowerCase();
+            if (lbl === 'search') { btns[i].click(); return; }
+        }
+        f.submit();
+    """)
+    time.sleep(3)
+    # If the button's onclick validation didn't submit, force a direct POST to
+    # liennames.asp (still scoped to the lien form, never the CMS search).
     try:
-        driver.find_element(By.NAME, "txtInstrCode").submit()
+        if "namesearch.asp" in (driver.current_url or ""):
+            driver.execute_script(
+                "var a=document.getElementsByName('txtInstrCode')[0];"
+                "if(a&&a.form){a.form.submit();}")
+            time.sleep(3)
     except Exception:
         pass
 
