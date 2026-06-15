@@ -1048,13 +1048,21 @@ def main() -> None:
                 service = get_gmail_service()
                 print("  ✅ Gmail authenticated\n")
 
-            steps = [args.step] if args.step else list(range(1, MAX_STEP + 1))
+            # Process DEEPEST step first (7..1) and share ONE daily budget across
+            # all steps. The Gmail account is capped at ~50 sends/day; step 1 has a
+            # multi-thousand-contact backlog, so the old ascending order (1..7) with
+            # a per-step limit let step 1 burn the entire daily quota and throttle
+            # out during step 2 — steps 3-7 were never reached. Follow-ups now take
+            # priority over new top-of-funnel sends (finish what we started).
+            steps = [args.step] if args.step else list(range(MAX_STEP, 0, -1))
             stop_all = False
+            remaining = args.limit  # shared daily budget, not per-step
             for step in steps:
-                if stop_all:
+                if stop_all or remaining <= 0:
                     break
-                leads = get_leads_for_step(cur, step, args.limit, args.county)
-                print(f"\n--- Step {step} — {len(leads)} leads ready ---")
+                leads = get_leads_for_step(cur, step, remaining, args.county)
+                print(f"\n--- Step {step} — {len(leads)} leads ready "
+                      f"(daily budget left: {remaining}) ---")
                 if not leads:
                     continue
                 sent, failed, throttle = run_step(step, leads, service, cur, args.dry_run, args.delay)
@@ -1062,6 +1070,7 @@ def main() -> None:
                 run_stats["steps"][step] = {"sent": sent, "failed": failed}
                 run_stats["total_sent"] += sent
                 run_stats["total_failed"] += failed
+                remaining -= sent
                 if throttle:
                     stop_all = True
 
