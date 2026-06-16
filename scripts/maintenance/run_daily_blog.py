@@ -31,6 +31,11 @@ import random
 from datetime import date, datetime
 from pathlib import Path
 
+import requests
+
+INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"  # same key as social_media_poster.py / reel_generator.py
+SITE_URL     = "https://taxcasereview.org"
+
 BASE         = Path(__file__).resolve().parent          # scripts/maintenance
 REPO_ROOT    = BASE.parent.parent                        # leadflow repo root
 HISTORY_FILE = REPO_ROOT / "data" / "blog_publish_history.json"
@@ -226,6 +231,26 @@ def run_cmd(cmd: list, label: str, dry_run: bool = False) -> bool:
     return result.returncode == 0
 
 
+def index_url(url: str):
+    """Submit a freshly published URL to IndexNow (Bing/Yandex) for fast crawl.
+    Same key/host as social_media_poster.py and reel_generator.py. Non-blocking —
+    indexing must never fail a publish."""
+    try:
+        payload = {
+            "host":        "taxcasereview.org",
+            "key":         INDEXNOW_KEY,
+            "keyLocation": f"https://taxcasereview.org/{INDEXNOW_KEY}.txt",
+            "urlList":     [url],
+        }
+        r = requests.post("https://api.indexnow.org/indexnow",
+                          json=payload,
+                          headers={"Content-Type": "application/json"},
+                          timeout=10)
+        print(f"  IndexNow ping: {r.status_code} — {url}")
+    except Exception as e:
+        print(f"  IndexNow ping failed (non-blocking): {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="TaxCase Review Daily Blog Runner v2")
     parser.add_argument("--topic",   action="store_true", help="Force national topic post")
@@ -315,6 +340,11 @@ def main():
                 print(f"  Recorded: {full_slug} published {date.today().isoformat()}")
             if logger:
                 logger.step_done("publish_blog", ok=ok, detail=f"state:{full_slug}")
+
+        # Submit the new blog URL to IndexNow so Bing/Yandex crawl it fast.
+        # Canonical public blog path is /blog/md/<slug> (_blog_public_url).
+        if published_slug and not args.dry_run:
+            index_url(f"{SITE_URL}/blog/md/{published_slug}")
 
         print(f"\n  Blog run complete: {'OK' if ok else 'FAILED'}")
         if logger:

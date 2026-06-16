@@ -506,6 +506,28 @@ RULES:
 
 # ── GitHub publisher ──────────────────────────────────────────────────────────
 
+INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"  # same key as social_media_poster.py / reel_generator.py
+
+
+def index_url(url: str):
+    """Submit a freshly published report URL to IndexNow (Bing/Yandex). Same
+    key/host as the rest of the codebase. Non-blocking."""
+    try:
+        payload = {
+            "host":        "taxcasereview.org",
+            "key":         INDEXNOW_KEY,
+            "keyLocation": f"https://taxcasereview.org/{INDEXNOW_KEY}.txt",
+            "urlList":     [url],
+        }
+        r = requests.post("https://api.indexnow.org/indexnow",
+                          json=payload,
+                          headers={"Content-Type": "application/json"},
+                          timeout=10)
+        print(f"  IndexNow ping: {r.status_code} — {url}")
+    except Exception as e:
+        print(f"  IndexNow ping failed (non-blocking): {e}")
+
+
 def publish_to_github(filename: str, content: str,
                       commit_msg: str) -> bool:
     if not GITHUB_TOKEN:
@@ -610,6 +632,7 @@ def main():
                 published  = publish_to_github(filename, report_md, commit_msg)
                 if published:
                     print(f"  🌐 {SITE_URL}/reports/{slug}")
+                    index_url(f"{SITE_URL}/reports/{slug}")
                 results[state_key] = "published" if published else "failed"
             else:
                 print(f"  [DRY RUN] → {slug}.md")

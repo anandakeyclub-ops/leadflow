@@ -2071,7 +2071,7 @@ Return ONLY the markdown. No preamble. No explanation."""
             print(f"  Blog published: {SITE_URL}/blog/md/{slug}")
             # IndexNow ping — submits new URL to Bing/Yandex for near-instant crawl
             try:
-                indexnow_url = f"{SITE_URL}/blog/{slug}"
+                indexnow_url = f"{SITE_URL}/blog/md/{slug}"  # canonical public path (/blog/{slug} 404s)
                 indexnow_payload = {
                     "host": "taxcasereview.org",
                     "key": "9e9b2e673445719e87ed5e2213724841",
