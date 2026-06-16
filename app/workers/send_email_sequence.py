@@ -284,12 +284,12 @@ def stable_choice(options: list[str], seed_parts: list[object]) -> tuple[str, in
 
 SUBJECT_LINES: dict[int, list[str]] = {
     # Step 1: public-record awareness / curiosity.
-    # WINNER ONLY. "Quick question about your {county} County filing" tested at
-    # 17.2% open vs 0-8% for every other variant (and 0% on 100+ sends for
-    # "Hillsborough County filing" / "Regarding the IRS federal tax lien in
-    # Miami..."). Per data, step 1 no longer rotates — every contact gets the
-    # winner, personalized by county. choose_subject() handles the no-county
-    # fallback (-> state, then generic) and avoids "County County" duplication.
+    # WINNER ONLY. "Quick question about your {county} County filing" now at
+    # 28.8% open (up from 17.2%) vs <5% for every retired variant — killed
+    # s1_v2, s1_v3, s1_v4, s1_v5, s1_v6, s1_v12 (all sub-5% open). Per data,
+    # step 1 no longer rotates — every contact gets the winner, personalized by
+    # county. choose_subject() handles the no-county fallback (-> state, then
+    # generic) and avoids "County County" duplication.
     1: [
         "Quick question about your {county} County filing",
     ],
