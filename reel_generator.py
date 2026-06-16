@@ -95,6 +95,70 @@ except Exception:
 INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"  # same key as social_media_poster.py
 
 
+# ── Visual Style System (v9 — IRS-red dark-gradient brand) ──────────────────────
+# One consistent, high-contrast, scroll-stopping look injected into every scene
+# description. STYLE ONLY — does not touch send/webhook/scoring/HeyGen submission.
+COLOR_PALETTE = {
+    "primary":     "#CC0000",  # IRS red — hook keyword, alarm
+    "accent":      "#FF6B00",  # orange — highlights, positive/settlement keyword
+    "text":        "#FFFFFF",  # white — supporting/body text
+    "bg_top":      "#0A1628",  # deep navy — gradient top
+    "bg_bottom":   "#1A0500",  # near-black warm — gradient bottom
+    "bg_gradient": "linear-gradient(180deg, #0A1628 0%, #1A0500 100%)",
+}
+
+TYPOGRAPHY = {
+    "font":         "Bold sans-serif (Impact, Anton, or Montserrat Black)",
+    "hook_keyword": "ALL CAPS, red (#CC0000) or orange (#FF6B00), 72px+, massive",
+    "supporting":   "Title Case, white (#FFFFFF), 36px, medium weight",
+    "max_words":    6,  # never more than 6 words per text element
+}
+
+# IRS Data Book FY2025 figures — use verbatim in DATA scenes.
+IRS_DATA_FY2025 = {
+    "nftls":                  "214,099",  # Notices of Federal Tax Lien filed
+    "oic_acceptance_rate":    "14.1%",    # Offer in Compromise acceptance rate
+    "installment_agreements": "3.16M",    # active installment agreements
+}
+
+_P = COLOR_PALETTE
+VISUAL_STYLE_GUIDE = f"""
+VISUAL STYLE (apply to EVERY scene description — background, text color, visual, avatar position):
+- Background: deep navy-to-dark gradient {_P['bg_top']} -> {_P['bg_bottom']} for graphic scenes — NEVER a flat color.
+- Primary keyword: large, bold, ALL CAPS, red {_P['primary']} or orange {_P['accent']}, 72px+.
+- Supporting text: white {_P['text']}, Title Case, ~36px, clean bold sans-serif ({TYPOGRAPHY['font']}).
+- Hook format: provocative statement split across 2 lines — BIG WORD in red/orange on top, "supporting phrase" in white below.
+- Never more than {TYPOGRAPHY['max_words']} words on screen at once. No cluttered layouts.
+- Text pops in fast; fast cuts between scenes; serious/tense music ducked under voice.
+- Palette: primary {_P['primary']}, accent {_P['accent']}, white {_P['text']}, gradient {_P['bg_top']} -> {_P['bg_bottom']}.
+""".strip()
+
+# Per-type style notes: hook keyword + color + signature visual for each reel type.
+REEL_TYPE_STYLE_NOTES = {
+    "contractor_disaster": {"hook_keyword": "TAX DISASTER",     "hook_color": COLOR_PALETTE["primary"],
+                            "visual": "lien stamp",
+                            "note": 'Hook text = "TAX DISASTER" in red, lien stamp visual.'},
+    "myth_bust":           {"hook_keyword": "IRS MYTH",          "hook_color": COLOR_PALETTE["primary"],
+                            "visual": "busted icon",
+                            "note": 'Hook text = "IRS MYTH" in red, busted icon.'},
+    "urgency":             {"hook_keyword": "IRS DEADLINE",      "hook_color": COLOR_PALETTE["primary"],
+                            "visual": "calendar",
+                            "note": 'Hook text = "IRS DEADLINE" in red, calendar visual.'},
+    "settlement":          {"hook_keyword": "SETTLE FOR LESS",   "hook_color": COLOR_PALETTE["accent"],
+                            "visual": "handshake",
+                            "note": 'Hook text = "SETTLE FOR LESS" in orange, handshake visual.'},
+    "lien_explained":      {"hook_keyword": "FEDERAL TAX LIEN",  "hook_color": COLOR_PALETTE["primary"],
+                            "visual": f"DATA scene with {IRS_DATA_FY2025['nftls']} NFTLs stat",
+                            "note": f'DATA scene with {IRS_DATA_FY2025["nftls"]} NFTLs stat, IRS red theme.'},
+}
+
+def get_style_notes(reel_type: str) -> dict:
+    return REEL_TYPE_STYLE_NOTES.get(reel_type, {
+        "hook_keyword": "IRS ALERT", "hook_color": COLOR_PALETTE["primary"],
+        "visual": "IRS notice", "note": "IRS red theme, dark gradient background.",
+    })
+
+
 # ── Script Length Tiers ────────────────────────────────────────────────────────
 SCRIPT_LENGTH_TIERS = {
     "micro":    {"min": 40,  "max": 90,  "seconds": "15-35"},
@@ -666,19 +730,60 @@ def pick_emotional_driver(reel_type: str, reel_format: str) -> str:
         pool += ["identity", "status"]
     return random.choice(pool)
 
+def build_five_scene_structure(reel_type: str, county: str, state_name: str, amount: int,
+                               arch_name: str, hook_keyword: str = "TAX DISASTER",
+                               data_stat: str | None = None,
+                               data_label: str = "IRS LIENS FILED") -> list[dict]:
+    """The 5-scene visual builder (HOOK -> PROBLEM -> DATA -> SOLUTION -> CTA).
+    Every scene specifies background, text overlay (+color), visual element, and
+    avatar position. STYLE ONLY — drives scene descriptions, not scoring/render."""
+    g    = COLOR_PALETTE
+    stat = data_stat or IRS_DATA_FY2025["nftls"]
+    grad = f"navy-to-dark gradient {g['bg_top']} -> {g['bg_bottom']}"
+    return [
+        {"scene": 1, "name": "HOOK", "duration": "3-4s",
+         "background": grad,
+         "avatar": "talking head, bottom 40% of frame",
+         "text_overlay": f'"{hook_keyword}" (red {g["primary"]}, 72px+) over "supporting phrase" (white {g["text"]}, 36px), top of frame',
+         "visual": "bold 2-line text overlay above avatar, fast pop-in"},
+        {"scene": 2, "name": "PROBLEM", "duration": "8-10s",
+         "background": f"split screen on {grad} — graphic top half, avatar bottom half",
+         "avatar": "bottom half, talking",
+         "text_overlay": f"white {g['text']} keyword, max {TYPOGRAPHY['max_words']} words",
+         "visual": "top half shows IRS notice / lien document / bank statement"},
+        {"scene": 3, "name": "DATA", "duration": "6-8s",
+         "background": f"full-screen {grad}",
+         "avatar": "OFF screen this scene",
+         "text_overlay": f"{stat} centered (white {g['text']}, bold) + '{data_label}' below (orange {g['accent']}, 2-3 words)",
+         "visual": f"full-screen motion graphic — IRS Data Book FY2025 stat ({stat})"},
+        {"scene": 4, "name": "SOLUTION", "duration": "8-10s",
+         "background": f"{grad} with animated graphic elements beside/behind avatar",
+         "avatar": "talking head, resolution graphic animates beside/behind",
+         "text_overlay": f"bold white {g['text']} keyword, bottom third",
+         "visual": "resolution option shown visually (OIC / installment plan / lien withdrawal)"},
+        {"scene": 5, "name": "CTA", "duration": "4-5s",
+         "background": f"full-screen {grad}",
+         "avatar": "OFF screen this scene",
+         "text_overlay": f'rounded pill button "↓ BOOK FREE REVIEW ↓" (white {g["text"]}) + "taxcasereview.org" below (white, smaller)',
+         "visual": "bold CTA pill button, fast pop-in"},
+    ]
+
+
 def build_visual_storyboard_template(reel_type: str, reel_format: str, county: str, state_name: str, amount: int, arch_name: str) -> list[dict]:
     spec = REEL_FORMATS.get(reel_format, REEL_FORMATS["documentary"])
     visual_pool = spec.get("visuals", [])
+    g    = COLOR_PALETTE
+    grad = f"gradient {g['bg_top']}->{g['bg_bottom']}"
     base = [
-        ("0-2s",  visual_pool[0] if visual_pool else "full-screen pattern interrupt", f"${amount:,} PROBLEM", "No avatar. Full-screen motion, sound hit, immediate stakes."),
-        ("2-5s",  visual_pool[1] if len(visual_pool) > 1 else "IRS notice/document reveal", "PUBLIC RECORD", "Evidence before explanation. Zoom into the consequence."),
-        ("5-8s",  "split-screen avatar + evidence", arch_name.upper(), "Avatar enters as expert narrator, not the main visual."),
-        ("8-12s", visual_pool[2] if len(visual_pool) > 2 else "timeline escalation", "THE CLOCK STARTED", "First retention reset. Timeline jump or document stamp."),
-        ("12-18s", visual_pool[3] if len(visual_pool) > 3 else "bank/payroll/financing consequence", "THIS IS WHERE IT HURT", "Show business impact, not tax jargon."),
-        ("18-25s", visual_pool[4] if len(visual_pool) > 4 else "county map + public record", f"{county.upper()} COUNTY", "Localize the risk. Map zoom or data card."),
-        ("25-35s", "decision fork graphic", "OPTIONS SHRINK", "Second retention reset. Show two paths: act vs avoid."),
-        ("35-50s", "lesson card + checklist", "WHAT TO DO NEXT", "Make it save-worthy. Bullets must be visual, not spoken-only."),
-        ("50-60s", "CTA card + avatar small picture-in-picture", "COMMENT OR TAKE QUIZ", "Avatar under 30% screen. CTA visual does the selling."),
+        ("0-2s",  visual_pool[0] if visual_pool else "full-screen pattern interrupt", f"${amount:,} PROBLEM", f"No avatar. Full-screen {grad}, keyword red {g['primary']} 72px+, sound hit, immediate stakes."),
+        ("2-5s",  visual_pool[1] if len(visual_pool) > 1 else "IRS notice/document reveal", "PUBLIC RECORD", f"Evidence before explanation. Zoom into consequence on {grad}. Overlay white {g['text']}."),
+        ("5-8s",  "split-screen avatar + evidence", arch_name.upper(), "Avatar enters as expert narrator, not the main visual. Keyword red/orange, dark gradient."),
+        ("8-12s", visual_pool[2] if len(visual_pool) > 2 else "timeline escalation", "THE CLOCK STARTED", f"First retention reset. Timeline jump or document stamp. Keyword red {g['primary']}."),
+        ("12-18s", visual_pool[3] if len(visual_pool) > 3 else "bank/payroll/financing consequence", "THIS IS WHERE IT HURT", f"Show business impact, not tax jargon. Orange {g['accent']} highlight on key number."),
+        ("18-25s", visual_pool[4] if len(visual_pool) > 4 else "county map + public record", f"{county.upper()} COUNTY", f"Localize the risk. Map zoom or DATA card on {grad}. White {g['text']} stat, orange label."),
+        ("25-35s", "decision fork graphic", "OPTIONS SHRINK", f"Second retention reset. Two paths: act vs avoid. Keyword orange {g['accent']}."),
+        ("35-50s", "lesson card + checklist", "WHAT TO DO NEXT", f"Make it save-worthy. Bullets visual, not spoken-only. White {g['text']} on {grad}, max 6 words/line."),
+        ("50-60s", "CTA pill button + avatar small picture-in-picture", "BOOK FREE REVIEW", f"Avatar under 30% screen. Rounded pill CTA white {g['text']} on {grad}. taxcasereview.org below."),
     ]
     return [{"time": t, "visual": v, "overlay": o, "editor_note": n} for t, v, o, n in base]
 
@@ -1054,6 +1159,13 @@ def _generate_once(reel_type: str, context: dict) -> dict:
     arch_detail  = archetype["detail"]
     base_storyboard = build_visual_storyboard_template(reel_type, reel_format, county, state_name, debt_amount, arch_name)
     base_resets     = build_retention_resets_template(reel_format)
+    style_notes     = get_style_notes(reel_type)
+    five_scenes     = build_five_scene_structure(
+        reel_type, county, state_name, debt_amount, arch_name,
+        hook_keyword=style_notes["hook_keyword"],
+        data_stat=IRS_DATA_FY2025["nftls"],
+        data_label="IRS LIENS FILED",
+    )
 
     tier      = pick_length_tier(reel_type)
     tier_info = SCRIPT_LENGTH_TIERS[tier]
@@ -1117,12 +1229,22 @@ NEVER say: "The longer you wait" / "Consult a professional" / "It depends"
 NEVER use generic examples. Always use specific names, amounts, counties, industries."""
 
     visual_instruction = f"""
+{VISUAL_STYLE_GUIDE}
+STYLE NOTE FOR THIS REEL: {style_notes['note']}
+Lead hook keyword = "{style_notes['hook_keyword']}" in {style_notes['hook_color']}; signature visual = {style_notes['visual']}.
+
+SCENE STRUCTURE — build the reel as these 5 scenes (60-90s total, fast cuts):
+{json.dumps(five_scenes, ensure_ascii=False)}
+Each scene description MUST specify: background, text overlay content + color, visual element, and avatar position (on/off screen).
+DATA scene pulls a real IRS Data Book FY2025 figure ({IRS_DATA_FY2025['nftls']} NFTLs, {IRS_DATA_FY2025['oic_acceptance_rate']} OIC acceptance rate, {IRS_DATA_FY2025['installment_agreements']} installment agreements).
+
 After HASHTAGS, output ALL of these sections exactly:
 VISUAL_STORYBOARD:
 [8-9 rows required. Format: TIME | VISUAL | TEXT_OVERLAY | EDITOR_NOTE]
+Each row's EDITOR_NOTE must name the background (dark gradient {COLOR_PALETTE['bg_top']}->{COLOR_PALETTE['bg_bottom']}), the text overlay color (red {COLOR_PALETTE['primary']} / orange {COLOR_PALETTE['accent']} keyword, white {COLOR_PALETTE['text']} support), and avatar position (on/off screen). Max {TYPOGRAPHY['max_words']} words per overlay.
 Required template to improve, not copy blindly:
 {json.dumps(base_storyboard, ensure_ascii=False)}
-Rules: no repeated visual, avatar never primary for more than 30% of reel, visual changes every 1-3 seconds.
+Rules: no repeated visual, avatar never primary for more than 30% of reel, visual changes every 1-3 seconds, no flat-color backgrounds.
 
 RETENTION_RESETS:
 [at least 5 rows. Format: TIME | RESET | EDITOR_NOTE]
@@ -1633,16 +1755,20 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
             f"Archetype: {arch_name}, {_v7_trade}.\n"
             f"\n"
             f"OPENING HOOK (FULL SCREEN TEXT, no avatar): {_new_story}\n"
+            f"Hook keyword \"{style_notes['hook_keyword']}\" in {style_notes['hook_color']} over a white supporting phrase.\n"
+            f"\n"
+            f"{VISUAL_STYLE_GUIDE}\n"
             f"\n"
             f"MANDATORY VISUAL RULES:\n"
-            f"- NEVER more than 3 seconds of avatar on plain black background\n"
+            f"- NEVER more than 3 seconds of avatar on a flat background — use the dark navy gradient {COLOR_PALETTE['bg_top']}->{COLOR_PALETTE['bg_bottom']}\n"
             f"- Visual must change every 1-3 seconds throughout\n"
-            f"- Every scene MUST have an on-screen text overlay\n"
+            f"- Every scene MUST have an on-screen text overlay (red/orange keyword, white support, max {TYPOGRAPHY['max_words']} words)\n"
             f"- Use split-screen when avatar speaks (avatar + document/evidence side by side)\n"
             f"- First 2 seconds: FULL SCREEN TEXT ONLY, no avatar\n"
+            f"- Each scene description states: background, text overlay content + color, visual element, avatar position (on/off)\n"
             f"\n"
             f"STRUCTURE:\n"
-            f"Sec 0-2: Full screen text hook above\n"
+            f"Sec 0-2: Full screen text hook above on dark gradient\n"
             f"Sec 2-5: Visual evidence (IRS notice, bank app, document, public record)\n"
             f"Sec 5-10: Split screen - avatar + evidence visual\n"
             f"Sec 10-20: Escalation timeline with visuals\n"
@@ -1677,15 +1803,18 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
             f"{persona}\n"
             f"VISUAL-FIRST MINI-DOCUMENTARY. County: {county}. State: {state_name}. {state_url} | {PHONE}\n"
             f"Archetype: {arch_name}, {_v7_trade}.\n\n"
-            f"OPENING HOOK (FULL SCREEN TEXT, no avatar): {_new_story}\n\n"
+            f"OPENING HOOK (FULL SCREEN TEXT, no avatar): {_new_story}\n"
+            f"Hook keyword \"{style_notes['hook_keyword']}\" in {style_notes['hook_color']} over a white supporting phrase.\n\n"
+            f"{VISUAL_STYLE_GUIDE}\n\n"
             f"MANDATORY VISUAL RULES:\n"
-            f"- NEVER more than 3 seconds of avatar on plain black background\n"
+            f"- NEVER more than 3 seconds of avatar on a flat background — use the dark navy gradient {COLOR_PALETTE['bg_top']}->{COLOR_PALETTE['bg_bottom']}\n"
             f"- Visual must change every 1-3 seconds throughout\n"
-            f"- Every scene MUST have an on-screen text overlay\n"
+            f"- Every scene MUST have an on-screen text overlay (red/orange keyword, white support, max {TYPOGRAPHY['max_words']} words)\n"
             f"- Use split-screen when avatar speaks\n"
-            f"- First 2 seconds: FULL SCREEN TEXT ONLY, no avatar\n\n"
+            f"- First 2 seconds: FULL SCREEN TEXT ONLY, no avatar\n"
+            f"- Each scene description states: background, text overlay content + color, visual element, avatar position (on/off)\n\n"
             f"STRUCTURE:\n"
-            f"Sec 0-2: Full screen text hook\n"
+            f"Sec 0-2: Full screen text hook on dark gradient\n"
             f"Sec 2-5: Visual evidence (IRS notice, bank app, document, public record)\n"
             f"Sec 5-10: Split screen - avatar + evidence\n"
             f"Sec 10-20: Escalation timeline with visuals\n"
@@ -1967,17 +2096,21 @@ CUE_BG_VIDEOS = {
 }
 
 # Pexels search query per cue — used only when PEXELS_API_KEY is set.
+# Aligned to the v9 visual-style B-roll mapping.
 CUE_SEARCH_TERMS = {
-    "irs_notice": "tax documents paperwork desk", "lien_stamp": "legal documents stamp",
-    "lien_document": "legal paperwork documents", "public_record": "documents filing office",
-    "mailbox": "mailbox letters mail", "bank_freeze": "money finance bank",
+    "irs_notice": "tax document letter envelope", "lien_stamp": "legal document stamp official",
+    "lien_document": "legal document stamp official", "public_record": "legal document stamp official",
+    "mailbox": "tax document letter envelope", "bank_freeze": "bank statement financial stress",
     "debt_overlay": "money cash counting", "penalty_ticker": "stock market chart money",
-    "dashboard_alert": "red warning alert screen", "countdown": "clock ticking time",
-    "calendar": "calendar days time", "contractor_truck": "construction worker truck site",
-    "revenue_officer": "government office desk", "phone_ring": "phone call office",
+    "dashboard_alert": "red warning alert screen", "countdown": "calendar deadline urgent planning",
+    "calendar": "calendar deadline urgent planning", "contractor_truck": "contractor truck construction worker",
+    "revenue_officer": "government office desk", "phone_ring": "paycheck salary worker stress",
     "county_map": "united states map", "heat_map": "data map visualization",
-    "before_after": "stressed businessman office", "checklist": "checklist clipboard writing",
-    "myth_reality": "documents desk paperwork", "red_arrow": "financial chart graph",
+    "before_after": "business owner relief success", "checklist": "checklist clipboard writing",
+    "myth_reality": "legal document stamp official", "red_arrow": "financial chart graph",
+    # v9 additions — new cue handles from the style guide
+    "wage_garnishment": "paycheck salary worker stress", "settlement": "handshake agreement business",
+    "calendar_deadline": "calendar deadline urgent planning", "relief": "business owner relief success",
 }
 
 
