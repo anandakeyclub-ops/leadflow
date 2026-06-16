@@ -21,6 +21,13 @@ try:
 except Exception as e:
     print(f"Warning: bookings router not loaded: {e}")
 
+# Native Calendly webhook — Calendly POSTs directly to /api/webhooks/calendly
+try:
+    from app.api.webhooks.calendly_webhook import router as calendly_webhook_router
+    app.include_router(calendly_webhook_router)
+except Exception as e:
+    print(f"Warning: calendly webhook router not loaded: {e}")
+
 # Tracking — mounted at /t so URLs match the email pixel/link generators
 # (open_pixel_url -> {base}/t/o/{id}.gif, tracked_link -> {base}/t/c/{id}).
 try:

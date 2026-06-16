@@ -109,14 +109,38 @@ CREATE TABLE IF NOT EXISTS outreach_events (
     followup_due_at TIMESTAMP
 );
 
+-- Calendly bookings captured via POST /api/webhooks/calendly (native webhook)
+-- and POST /api/bookings/calendly. Matches the live 29-column table.
 CREATE TABLE IF NOT EXISTS bookings (
-    id SERIAL PRIMARY KEY,
-    lead_id INTEGER NOT NULL REFERENCES matched_leads(id),
-    booking_source VARCHAR(50) NOT NULL DEFAULT 'landing_page',
-    external_booking_id VARCHAR(255),
-    status VARCHAR(50) NOT NULL DEFAULT 'booked',
-    scheduled_at TIMESTAMP,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    id                     SERIAL PRIMARY KEY,
+    email                  TEXT NOT NULL,
+    name                   TEXT,
+    phone                  TEXT,
+    calendly_event_id      TEXT UNIQUE,
+    calendly_event_url     TEXT,
+    scheduled_at           TIMESTAMPTZ,
+    calendly_booked_at     TIMESTAMPTZ,
+    quiz_answers           JSONB DEFAULT '{}'::jsonb,
+    lien_id                INTEGER,
+    lien_county            TEXT,
+    lien_amount            NUMERIC,
+    lien_pdf_url           TEXT,
+    stripe_session_id      TEXT,
+    paid_at                TIMESTAMPTZ,
+    amount_paid            NUMERIC,
+    traffic_source         TEXT,
+    email_campaign         TEXT,
+    email_step             INTEGER,
+    status                 TEXT DEFAULT 'pending',
+    retarget_email_1_sent  BOOLEAN DEFAULT FALSE,
+    retarget_email_2_sent  BOOLEAN DEFAULT FALSE,
+    feedback_sent          BOOLEAN DEFAULT FALSE,
+    feedback_response      TEXT,
+    crm_contact_id         TEXT,
+    crm_deal_id            TEXT,
+    crm_synced_at          TIMESTAMPTZ,
+    created_at             TIMESTAMPTZ DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS landing_submissions (
@@ -138,5 +162,6 @@ CREATE INDEX IF NOT EXISTS idx_matched_leads_county_id ON matched_leads(county_i
 CREATE INDEX IF NOT EXISTS idx_contacts_lead_id ON contacts(lead_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
 CREATE INDEX IF NOT EXISTS idx_outreach_events_lead_id ON outreach_events(lead_id);
-CREATE INDEX IF NOT EXISTS idx_bookings_lead_id ON bookings(lead_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_email ON bookings(email);
+CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
 CREATE INDEX IF NOT EXISTS idx_landing_submissions_lead_id ON landing_submissions(lead_id);
