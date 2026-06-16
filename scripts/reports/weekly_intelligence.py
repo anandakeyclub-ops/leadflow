@@ -692,6 +692,28 @@ def index_url(url: str):
         print(f"  IndexNow ping failed (non-blocking): {e}")
 
 
+def submit_sitemap(sitemap_url: str = None):
+    """Nudge Google to re-fetch the sitemap via the GSC Sitemaps API after a
+    publish. IndexNow covers Bing/Yandex; this is the Google lever. Requires a
+    GSC token with the webmasters (write) scope — mint one with
+    scripts/archive/gen_gsc_token.py. Non-blocking."""
+    sitemap_url = sitemap_url or f"{SITE_URL}/sitemap.xml"
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+        scopes = ["https://www.googleapis.com/auth/webmasters"]
+        creds = Credentials.from_authorized_user_file(str(GSC_TOKEN_FILE), scopes)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            GSC_TOKEN_FILE.write_text(creds.to_json())
+        service = build("searchconsole", "v1", credentials=creds)
+        service.sitemaps().submit(siteUrl=GSC_SITE_URL, feedpath=sitemap_url).execute()
+        print(f"  GSC sitemap submit: ok — {sitemap_url}")
+    except Exception as e:
+        print(f"  GSC sitemap submit failed (non-blocking): {e}")
+
+
 def publish_to_github(filename: str, content: str,
                       commit_msg: str) -> bool:
     if not GITHUB_TOKEN:
@@ -864,6 +886,7 @@ def main():
         if published:
             print(f"  🌐 {SITE_URL}/reports/{slug}")
             index_url(f"{SITE_URL}/reports/{slug}")
+            submit_sitemap()
 
     print(f"\n{'='*60}")
     print(f"  Weekly Intelligence Complete")

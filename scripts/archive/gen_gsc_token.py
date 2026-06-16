@@ -22,7 +22,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 REPO_ROOT   = Path(__file__).resolve().parents[2]
 CLIENT_FILE = REPO_ROOT / "data" / "credentials" / "gsc-oauth-client.json"
 TOKEN_FILE  = REPO_ROOT / "data" / "credentials" / "gsc-token.json"
-SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
+# Full webmasters scope (NOT readonly): a superset of read that also allows
+# sitemaps.submit, which the blog/weekly publish flows call after publishing.
+# Existing readonly readers (gsc_monitor, weekly_intelligence) keep working.
+SCOPES = ["https://www.googleapis.com/auth/webmasters"]
 GSC_SITE_URL = "sc-domain:taxcasereview.org"
 
 with open(CLIENT_FILE) as f:

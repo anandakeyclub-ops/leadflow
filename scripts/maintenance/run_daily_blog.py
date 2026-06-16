@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import random
@@ -251,6 +252,30 @@ def index_url(url: str):
         print(f"  IndexNow ping failed (non-blocking): {e}")
 
 
+def submit_sitemap(sitemap_url: str = None):
+    """Nudge Google to re-fetch the sitemap via the GSC Sitemaps API after a
+    publish. IndexNow covers Bing/Yandex; this is the Google lever. Requires a
+    GSC token with the webmasters (write) scope — mint one with
+    scripts/archive/gen_gsc_token.py. Non-blocking."""
+    sitemap_url = sitemap_url or f"{SITE_URL}/sitemap.xml"
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+        token_file = REPO_ROOT / os.getenv("GSC_TOKEN", "data/credentials/gsc-token.json")
+        site_url   = os.getenv("GSC_SITE_URL", "sc-domain:taxcasereview.org")
+        scopes = ["https://www.googleapis.com/auth/webmasters"]
+        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            token_file.write_text(creds.to_json())
+        service = build("searchconsole", "v1", credentials=creds)
+        service.sitemaps().submit(siteUrl=site_url, feedpath=sitemap_url).execute()
+        print(f"  GSC sitemap submit: ok — {sitemap_url}")
+    except Exception as e:
+        print(f"  GSC sitemap submit failed (non-blocking): {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="TaxCase Review Daily Blog Runner v2")
     parser.add_argument("--topic",   action="store_true", help="Force national topic post")
@@ -345,6 +370,7 @@ def main():
         # Canonical public blog path is /blog/md/<slug> (_blog_public_url).
         if published_slug and not args.dry_run:
             index_url(f"{SITE_URL}/blog/md/{published_slug}")
+            submit_sitemap()
 
         print(f"\n  Blog run complete: {'OK' if ok else 'FAILED'}")
         if logger:
