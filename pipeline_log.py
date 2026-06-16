@@ -109,7 +109,7 @@ class PipelineLogger:
         self._txt(f"  ⏭  {name} — skipped"
                   f"{' (' + reason + ')' if reason else ''}")
 
-    def finish(self, metrics: dict = None) -> dict:
+    def finish(self, metrics: dict = None, status: str = None) -> dict:
         self.finished = datetime.now().isoformat()
         elapsed = (datetime.fromisoformat(self.finished) -
                    datetime.fromisoformat(self.started)).total_seconds()
@@ -117,6 +117,9 @@ class PipelineLogger:
         fail_ct = sum(1 for s in self.steps if s["status"] == "error")
         skip_ct = sum(1 for s in self.steps if s["status"] == "skipped")
 
+        # `status` lets callers record an outcome that isn't a hard pass/fail
+        # (e.g. "quality_rejected") so downstream reports can show it distinctly
+        # instead of treating a clean early-return as a silent missing run.
         record = {
             "run_id":   self.run_id,
             "run_type": self.run_type,
@@ -124,7 +127,7 @@ class PipelineLogger:
             "started":  self.started,
             "finished": self.finished,
             "duration": round(elapsed, 1),
-            "status":   "ok" if fail_ct == 0 else "error",
+            "status":   status or ("ok" if fail_ct == 0 else "error"),
             "ok":       ok_ct,
             "failed":   fail_ct,
             "skipped":  skip_ct,

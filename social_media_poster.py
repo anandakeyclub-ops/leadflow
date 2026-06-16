@@ -2631,6 +2631,23 @@ def main():
         if scores["total"] < QUALITY_THRESHOLD and not args.force:
             print(f"  Score still {scores['total']}/100. Use --force to post anyway.")
             if not args.dry_run:
+                # Log the rejection instead of returning silently, so the daily
+                # summary shows "⚠️ quality rejected (NN/100)" rather than a
+                # ❌ missing run (generation worked; the post was just too weak).
+                if logger:
+                    logger.step_done(
+                        "generate_post", ok=True,
+                        detail=f"{state_cfg['name']} | {post_type} | score {scores['total']}/100")
+                    logger.finish({
+                        "post_type": post_type,
+                        "state":     state_key,
+                        "county":    context["county"],
+                        "platform":  args.platform,
+                        "sent":      False,
+                        "quality":   scores["total"],
+                        "threshold": QUALITY_THRESHOLD,
+                        "reason":    "below_quality_threshold",
+                    }, status="quality_rejected")
                 return
 
     if already_posted(text):

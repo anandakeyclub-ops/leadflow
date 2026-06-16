@@ -1116,11 +1116,19 @@ def build_content_automation_section(runs: list[dict]) -> str:
     if social:
         m = social.get("metrics", {})
         sent = bool(m.get("sent"))
-        rows.append(["Social media post",
-                     _status_chip(social.get("status") == "ok" and sent),
-                     (f"{m.get('platform','?')} · {m.get('post_type','?')} · "
-                      f"score {m.get('quality','?')}" if sent
-                      else f"generated but not sent ({m.get('post_type','?')})")])
+        st = social.get("status")
+        if st == "quality_rejected":
+            chip = badge(f"⚠️ quality rejected ({m.get('quality','?')}/100)",
+                         "#fef9c3", "#a16207")
+            rows.append(["Social media post", chip,
+                         (f"{m.get('post_type','?')} scored below the "
+                          f"{m.get('threshold','?')}/100 bar twice — not posted")])
+        else:
+            rows.append(["Social media post",
+                         _status_chip(st == "ok" and sent),
+                         (f"{m.get('platform','?')} · {m.get('post_type','?')} · "
+                          f"score {m.get('quality','?')}" if sent
+                          else f"generated but not sent ({m.get('post_type','?')})")])
     else:
         rows.append(["Social media post", _status_chip(False), "no run logged today"])
 
