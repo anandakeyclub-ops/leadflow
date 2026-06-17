@@ -1193,6 +1193,129 @@ def enrich_normalized_liens(county: str = None,
 
 
 
+def enrich_normalized_contacts(state: str = "TX", limit: int = 100,
+                               dry_run: bool = False, min_score: int = 65) -> dict:
+    """
+    Enrich emails for lien-MATCHED normalized_contacts via Google CSE + website
+    scraping, then write the email back to normalized_contacts so
+    sync_to_email_pipeline() can forward it into the 7-touch sequence.
+
+    Targets rows that are: state=<state>, has_lien_match=TRUE, no email yet,
+    match_score >= min_score (default 65 — drops the threshold-floor/surname
+    spurious matches), company-style name (person-format 'LAST, FIRST' rows are
+    skipped: they're individual licensees with no business website to scrape, and
+    searching them just burns the 100/day Google quota), and not previously
+    attempted (email_source IS NULL).
+
+    --dry-run still performs the real search/scrape and prints what it finds, but
+    does not write to the DB.
+
+    Usage:
+      python multi_state_email_enrichment.py --source normalized_contacts --state tx --dry-run --limit 20
+    """
+    if not HAS_DB:
+        print("  No DB connection")
+        return {"enriched": 0, "error": "no db"}
+
+    st = state.upper()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, business_name, business_city, match_score
+                FROM normalized_contacts
+                WHERE state = %s
+                  AND has_lien_match = TRUE
+                  AND (email IS NULL OR email = '')
+                  AND match_score >= %s
+                  AND business_name IS NOT NULL
+                  AND business_name NOT LIKE '%%, %%'   -- company-format only
+                  AND LENGTH(business_name) > 3
+                  AND email_source IS NULL              -- skip already-attempted
+                ORDER BY match_score DESC, id
+                LIMIT %s
+            """, (st, min_score, limit))
+            rows = cur.fetchall()
+
+        if not rows:
+            print("  No unenriched lien-matched contacts found.")
+            return {"enriched": 0, "skipped": 0}
+
+        print(f"  Found {len(rows):,} lien-matched {st} contacts to enrich "
+              f"(score>={min_score}, company-format)")
+        enriched = 0
+        failed   = 0
+
+        for i, (cid, biz, city, score) in enumerate(rows):
+            # business_city is often "HOUSTON TX" — drop a trailing state token.
+            parts = (city or "").split()
+            if parts and parts[-1].upper() == st:
+                parts = parts[:-1]
+            cty = " ".join(parts)
+
+            api = get_available_api()
+            if not api:
+                quota = get_quota_status()
+                print(f"\n  All API quotas exhausted: "
+                      f"Google {quota['google_used']}/{quota['google_limit']}, "
+                      f"ValueSerp {quota['valueserp_used']}/{quota['valueserp_limit']}")
+                break
+
+            print(f"  [{i+1}/{len(rows)}] [{api}] {biz[:38]:<38} "
+                  f"({cty or '—'}, {st}) score={score}", end=" ... ", flush=True)
+
+            urls  = search_for_website(biz, cty, st)
+            time.sleep(1.0)
+            email = None
+            for url in (urls or []):
+                email = scrape_email_from_url(url)
+                if email:
+                    break
+
+            if dry_run:
+                if email and not is_junk_email(email, biz):
+                    print(f"[DRY RUN] would save {email}  (via {urls[0][:48]})")
+                elif email:
+                    print(f"[DRY RUN] junk filtered: {email}")
+                elif urls:
+                    print(f"[DRY RUN] site found, no email ({urls[0][:48]})")
+                else:
+                    print("[DRY RUN] no results")
+                continue
+
+            if email and not is_junk_email(email, biz):
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE normalized_contacts
+                        SET email = %s, email_source = 'cse_scrape',
+                            email_confidence = 'medium', updated_at = NOW()
+                        WHERE id = %s
+                    """, (email.lower().strip(), cid))
+                conn.commit()
+                enriched += 1
+                print(f"✅ {email}")
+            else:
+                # Mark as attempted so re-runs don't re-search this row.
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE normalized_contacts
+                        SET email_source = 'cse_attempted', updated_at = NOW()
+                        WHERE id = %s
+                    """, (cid,))
+                conn.commit()
+                failed += 1
+                print(f"⚠ junk filtered: {email}" if email else "no email found")
+
+        print(f"\n  Enriched : {enriched:,}")
+        print(f"  Failed   : {failed:,}")
+        if enriched + failed:
+            print(f"  Rate     : {enriched/(enriched+failed)*100:.1f}%")
+        return {"enriched": enriched, "failed": failed}
+
+    finally:
+        conn.close()
+
+
 def rematch_tdlr_against_normalized_liens(limit: int = 500) -> int:
     """
     Improved TDLR matching: matches texas_tdlr_contacts against
@@ -1469,8 +1592,10 @@ def main():
     parser.add_argument("--test-apis", action="store_true",
                         help="Test API connections")
     parser.add_argument("--source",   default=None,
-                        choices=["normalized_liens", "arizona_roc"],
-                        help="Enrich from normalized_liens via Google CSE")
+                        choices=["normalized_liens", "normalized_contacts", "arizona_roc"],
+                        help="Enrich from an alternate source table via Google CSE")
+    parser.add_argument("--min-score", type=int, default=65,
+                        help="Min match_score for --source normalized_contacts (default: 65)")
     parser.add_argument("--county",   default=None,
                         help="Filter by county (use with --source normalized_liens)")
     args = parser.parse_args()
@@ -1492,6 +1617,26 @@ def main():
         enrich_arizona_roc(
             limit=args.limit,
             dry_run=args.dry_run,
+        )
+        return
+
+    # normalized_contacts mode (lien-matched, score-gated contacts)
+    if args.source == "normalized_contacts":
+        st = (args.state or "tx").upper()
+        quota = get_quota_status()
+        print(f"\n{'='*65}")
+        print(f"  Normalized Contacts Enrichment (Google CSE) — lien-matched")
+        print(f"  State    : {st}")
+        print(f"  Min score: {args.min_score}")
+        print(f"  Limit    : {args.limit}")
+        print(f"  Google   : {quota['google_remaining']} queries remaining today")
+        print(f"  {'DRY RUN' if args.dry_run else 'LIVE'}")
+        print(f"{'='*65}\n")
+        enrich_normalized_contacts(
+            state=st,
+            limit=args.limit,
+            dry_run=args.dry_run,
+            min_score=args.min_score,
         )
         return
 
