@@ -900,8 +900,16 @@ def simple_table(headers: list[str], rows: list[list[Any]]) -> str:
 # Sections
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_email_sequence_section(seq: dict) -> str:
+def build_email_sequence_section(seq: dict, sender: dict | None = None) -> str:
     summary_rows = ""
+    if sender:
+        kind = sender.get("sender_kind", "")
+        label = ("⚠️ Gmail cold account" if kind == "gmail_cold"
+                 else "Workspace (legacy)" if kind == "workspace_legacy"
+                 else "—")
+        acct = sender.get("sender_account") or sender.get("sender_login") or "—"
+        summary_rows += tr("Cold sending account", h(acct),
+                           f"{label} · replies → {sender.get('reply_to','—')}")
     summary_rows += tr("Total email-ready contacts", f"{seq.get('total_contacts',0):,}", f"{seq.get('waiting',0):,} not contacted")
     summary_rows += tr("Sends last 24h / 7d / 30d", f"{seq.get('sent_24h',0):,} / {seq.get('sent_7d',0):,} / {seq.get('sent_30d',0):,}", "all sequence steps")
     summary_rows += tr("Lifetime sends", f"{seq.get('sent_total',0):,}", "all 7 touches")
@@ -1446,6 +1454,9 @@ def build_booking_section(bk: dict) -> str:
 def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, conv: dict, ga4: dict, clarity: dict, ux: dict, today: str, bk: dict | None = None, data_section: str = ""):
     subject = f"📊 TaxCase Review Optimization Intelligence — {today}"
     _pipeline_runs = _read_pipeline_today()
+    # Surface which account did today's cold sends (logged by send_email_sequence).
+    _email_run = _latest_run(_pipeline_runs, lambda t: t == "email_sequence")
+    _sender = (_email_run or {}).get("metrics", {}) if _email_run else None
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1473,7 +1484,7 @@ def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, 
     {build_revenue_section(conv)}
     {build_traffic_section(ga4, clarity, ux)}
     {build_booking_section(bk or {})}
-    {build_email_sequence_section(seq)}
+    {build_email_sequence_section(seq, _sender)}
     {data_section}
 
     <p style="margin-top:28px;color:#64748b;font-size:12px;border-top:1px solid #e2e8f0;padding-top:14px">

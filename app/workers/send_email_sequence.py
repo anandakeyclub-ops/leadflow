@@ -59,9 +59,23 @@ except Exception as _e:
     subject_optimizer = None
     print(f"  ⚠ subject_optimizer unavailable, using hardcoded winner: {_e}")
 
-SENDER_EMAIL = os.getenv("GMAIL_SENDER", "romy@taxcasereview.org")
-APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
-SENDER_NAME = os.getenv("GMAIL_SENDER_NAME", "Romy")
+# Cold outreach sends from a consumer Gmail account when configured, because the
+# Workspace account (romy@taxcasereview.org) is permanently throttled. Credentials
+# switch as a unit so a Gmail login is never paired with the Workspace password.
+# Replies still route to Romy via REPLY_TO_EMAIL. Falls back to the legacy
+# Workspace account when GMAIL_COLD_SMTP_USER is unset.
+_COLD_USER = os.getenv("GMAIL_COLD_SMTP_USER", "").strip()
+if _COLD_USER:
+    SENDER_EMAIL    = os.getenv("GMAIL_COLD_EMAIL", _COLD_USER).strip()
+    SMTP_LOGIN_USER = _COLD_USER
+    APP_PASSWORD    = os.getenv("GMAIL_COLD_SMTP_PASSWORD", "").replace(" ", "")
+else:
+    SENDER_EMAIL    = os.getenv("GMAIL_SENDER", "romy@taxcasereview.org")
+    SMTP_LOGIN_USER = SENDER_EMAIL
+    APP_PASSWORD    = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
+SENDER_NAME    = os.getenv("GMAIL_SENDER_NAME", "Romy")
+# Replies always go to Romy regardless of which account does the sending.
+REPLY_TO_EMAIL = os.getenv("GMAIL_COLD_REPLY_TO", "romy@taxcasereview.org")
 BOOKING_LINK = os.getenv("BOOKING_LINK", "https://taxcasereview.org/quiz")
 TRACKING_BASE = os.getenv("TRACKING_BASE_URL", "http://localhost:8000")
 # 50 matches the Gmail Workspace sending ceiling this account is throttled to
@@ -147,10 +161,11 @@ def add_utm(url: str, extra: dict) -> str:
 
 def get_gmail_service():
     if not APP_PASSWORD:
-        raise ValueError("GMAIL_APP_PASSWORD not set in .env")
+        missing = "GMAIL_COLD_SMTP_PASSWORD" if _COLD_USER else "GMAIL_APP_PASSWORD"
+        raise ValueError(f"{missing} not set in .env (App Password for {SMTP_LOGIN_USER})")
     ctx = ssl.create_default_context()
     server = smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx)
-    server.login(SENDER_EMAIL, APP_PASSWORD)
+    server.login(SMTP_LOGIN_USER, APP_PASSWORD)
     return server
 
 
@@ -459,7 +474,7 @@ def wrap_html(body: str, tracking_id: str, cta_url: str) -> str:
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family:Arial,Helvetica,sans-serif;font-size:16px;color:#222;max-width:580px;margin:0 auto;padding:24px;line-height:1.65;background:#ffffff;">
 {body}
-<p style="font-size:13px;color:#777;margin-top:30px;">TaxCase Review · {SENDER_EMAIL} · {BOOKING_LINK}</p>
+<p style="font-size:13px;color:#777;margin-top:30px;">TaxCase Review · {REPLY_TO_EMAIL} · {BOOKING_LINK}</p>
 <p style="font-size:12px;color:#999;line-height:1.4;margin-top:18px;">This message references public record information. TaxCase Review is not the IRS or a government agency. Results vary by case facts. If this is not relevant, you can opt out below.</p>
 <p style="margin-top:16px;font-size:12px;color:#aaa;"><a href="{unsub_url}" style="color:#999;text-decoration:underline;">Unsubscribe</a></p>
 <img src="{pixel}" width="1" height="1" style="display:block;width:1px;height:1px;border:0;" alt="" />
@@ -684,7 +699,7 @@ def send_message(service, to_email: str, subject: str, plain: str, html: str) ->
     msg["Subject"] = subject
     msg["From"] = f"{SENDER_NAME} <{SENDER_EMAIL}>"
     msg["To"] = to_email
-    msg["Reply-To"] = SENDER_EMAIL
+    msg["Reply-To"] = REPLY_TO_EMAIL
     service.sendmail(SENDER_EMAIL, to_email, msg.as_string())
 
 
@@ -1037,6 +1052,8 @@ def main() -> None:
     print(f"  TaxCase Review Email Sequence v4.0 — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"  Campaign : {CAMPAIGN_ID}")
     print(f"  From     : {SENDER_NAME} <{SENDER_EMAIL}>")
+    print(f"  Sending  : {SMTP_LOGIN_USER} ({'Gmail cold account' if _COLD_USER else 'Workspace (legacy)'})")
+    print(f"  Reply-To : {REPLY_TO_EMAIL}")
     print(f"  Tracking : {TRACKING_BASE}")
     print(f"  Mode     : {'DRY RUN' if args.dry_run else 'LIVE'}")
     print(f"  Limit    : {args.limit} per step")
@@ -1111,7 +1128,9 @@ def main() -> None:
             write_sequence_log(run_stats)
 
             if logger:
-                logger.finish({"total_sent": run_stats["total_sent"], "total_failed": run_stats["total_failed"], "waiting": status["waiting"], "opens": status["opens"], "clicks": status["clicks"]})
+                logger.finish({"total_sent": run_stats["total_sent"], "total_failed": run_stats["total_failed"], "waiting": status["waiting"], "opens": status["opens"], "clicks": status["clicks"],
+                               "sender_account": SENDER_EMAIL, "sender_login": SMTP_LOGIN_USER,
+                               "reply_to": REPLY_TO_EMAIL, "sender_kind": "gmail_cold" if _COLD_USER else "workspace_legacy"})
 
     except Exception as e:
         conn.rollback()
