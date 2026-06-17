@@ -2338,6 +2338,99 @@ def _indexnow_ping(url: str):
         print(f"  IndexNow ping failed (non-blocking): {e}")
 
 
+# ── GitHub media rehosting (permanent URLs for Make.com) ────────────────────────
+# Make.com downloads the video by URL. HeyGen signed URLs expire (~7 days) and a
+# missing/empty URL throws BundleValidationError ("Invalid URL in parameter 'url'").
+# This rehosts the video — from a local file (Remotion) or a temporary URL (HeyGen)
+# — to the media repo via the Git Data API (robust for binaries, unlike the 1 MB-
+# limited Contents API) and returns a PERMANENT raw URL. Returns "" on failure;
+# callers MUST NOT post an empty URL to Make.
+def _gh_media_config() -> tuple[str, str]:
+    token = os.getenv("GITHUB_TOKEN", "")
+    repo  = os.getenv("GITHUB_MEDIA_REPO", "anandakeyclub-ops/taxcasereview-media")
+    return token, repo
+
+def rehost_to_github(dest_name: str, *, local_file: str = "", source_url: str = "",
+                     verify: bool = True, retries: int = 3) -> str:
+    import base64 as _b64
+    token, repo = _gh_media_config()
+    if not token:
+        print("  [rehost] GITHUB_TOKEN not set — cannot rehost"); return ""
+
+    # 1) Resolve the bytes — local render or remote (e.g. HeyGen signed) URL.
+    try:
+        if local_file and os.path.exists(local_file):
+            with open(local_file, "rb") as f:
+                data = f.read()
+        elif source_url:
+            print(f"  [rehost] downloading source ({source_url[:60]}...)")
+            dr = requests.get(source_url, timeout=120)
+            dr.raise_for_status()
+            data = dr.content
+        else:
+            print("  [rehost] no local_file or reachable source_url"); return ""
+    except Exception as e:
+        print(f"  [rehost] could not read source: {e}"); return ""
+    if not data:
+        print("  [rehost] empty payload — nothing to upload"); return ""
+
+    path    = f"reels/{dest_name}"
+    raw_url = f"https://raw.githubusercontent.com/{repo}/main/{path}"
+    hdrs    = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
+    b64     = _b64.b64encode(data).decode()
+    kb      = len(data) // 1024
+    api     = f"https://api.github.com/repos/{repo}"
+
+    for attempt in range(1, retries + 1):
+        try:
+            # blob -> tree -> commit -> move ref (the canonical binary-safe path).
+            br = requests.post(f"{api}/git/blobs", headers=hdrs,
+                               json={"content": b64, "encoding": "base64"}, timeout=120)
+            if br.status_code not in (200, 201):
+                raise RuntimeError(f"blob {br.status_code}: {br.text[:120]}")
+            blob_sha = br.json()["sha"]
+
+            rr = requests.get(f"{api}/git/ref/heads/main", headers=hdrs, timeout=30)
+            rr.raise_for_status(); parent = rr.json()["object"]["sha"]
+            cr = requests.get(f"{api}/git/commits/{parent}", headers=hdrs, timeout=30)
+            cr.raise_for_status(); base_tree = cr.json()["tree"]["sha"]
+
+            tr = requests.post(f"{api}/git/trees", headers=hdrs, json={
+                "base_tree": base_tree,
+                "tree": [{"path": path, "mode": "100644", "type": "blob", "sha": blob_sha}],
+            }, timeout=60)
+            tr.raise_for_status(); new_tree = tr.json()["sha"]
+
+            mr = requests.post(f"{api}/git/commits", headers=hdrs, json={
+                "message": f"reel: {dest_name}", "tree": new_tree, "parents": [parent],
+            }, timeout=60)
+            mr.raise_for_status(); new_commit = mr.json()["sha"]
+
+            ur = requests.patch(f"{api}/git/refs/heads/main", headers=hdrs,
+                                json={"sha": new_commit}, timeout=30)
+            ur.raise_for_status()
+            print(f"  [rehost] committed {dest_name} ({kb} KB) -> {raw_url}")
+
+            # Best-effort: confirm the CDN is serving it before we hand it to Make.
+            if verify:
+                for _ in range(6):
+                    time.sleep(2)
+                    try:
+                        if requests.head(raw_url, timeout=15).status_code == 200:
+                            break
+                    except Exception:
+                        pass
+                else:
+                    print("  [rehost] WARNING: raw URL not 200 yet (CDN lag); returning anyway")
+            return raw_url
+        except Exception as e:
+            print(f"  [rehost] attempt {attempt}/{retries} failed: {e}")
+            time.sleep(3 * attempt)
+
+    print(f"  [rehost] FAILED to upload {dest_name} after {retries} attempts")
+    return ""
+
+
 # ── Make.com Payload ───────────────────────────────────────────────────────────
 def post_reel_via_make(caption: str, hashtags: str,
                        video_url: str = "", video_file: str = "",
@@ -2350,7 +2443,13 @@ def post_reel_via_make(caption: str, hashtags: str,
     yt_title     = analytics.get("youtube_title","")
     if not yt_title:
         first    = caption.split(".")[0].strip()
-        yt_title = (first[:67] + " | TaxCase Review") if first else "IRS Tax Help | TaxCase Review"
+        if first:
+            yt_title = first[:67] + " | TaxCase Review"
+        elif reel_type:
+            # Last-resort title so YouTube never receives an empty field.
+            yt_title = f"{reel_type.replace('_', ' ').title()} — IRS Tax Lien Help for Contractors"
+        else:
+            yt_title = "IRS Tax Help | TaxCase Review"
     yt_desc = analytics.get("youtube_description","")
     state_name   = analytics.get("state_name", analytics.get("state", ""))
     county_name  = analytics.get("county", "")
@@ -2646,41 +2745,26 @@ def main():
         }
         save_script_locally(script_data, video_file=video_file)
         if video_file and not args.dry_run:
-            # Upload to GitHub for public URL
-            public_url = ""
-            if video_file and os.getenv("GITHUB_TOKEN"):
-                try:
-                    import base64 as _b64
-                    _gh_token = os.getenv("GITHUB_TOKEN","")
-                    _gh_repo  = os.getenv("GITHUB_MEDIA_REPO","anandakeyclub-ops/taxcasereview-media")
-                    _fname    = Path(video_file).name
-                    _api_url  = f"https://api.github.com/repos/{_gh_repo}/contents/reels/{_fname}"
-                    _raw_url  = f"https://raw.githubusercontent.com/{_gh_repo}/main/reels/{_fname}"
-                    _hdrs     = {"Authorization": f"token {_gh_token}"}
-                    _sha = None
-                    try:
-                        _r = requests.get(_api_url, headers=_hdrs, timeout=10)
-                        if _r.status_code == 200: _sha = _r.json().get("sha")
-                    except Exception: pass
-                    with open(video_file, "rb") as _f:
-                        _enc = _b64.b64encode(_f.read()).decode()
-                    _pl = {"message": f"reel: {_fname}", "content": _enc, "branch": "main"}
-                    if _sha: _pl["sha"] = _sha
-                    _r = requests.put(_api_url, headers=_hdrs, json=_pl, timeout=60)
-                    if _r.status_code in (200, 201):
-                        public_url = _raw_url
-                        print(f"  GitHub upload OK: {public_url}")
-                    else:
-                        print(f"  GitHub upload failed: {_r.status_code}")
-                except Exception as _e:
-                    print(f"  GitHub upload error: {_e}")
+            # Rehost the local render to a permanent GitHub raw URL for Make.com.
+            public_url = rehost_to_github(Path(video_file).name, local_file=video_file)
+            # Never post an empty URL — Make throws "Invalid URL in parameter 'url'".
+            if not public_url:
+                print("  Upload failed — NOT posting to Make (would send an empty video_url).")
+                save_reel_entry({"date":date.today().isoformat(),"engine":"remotion",
+                                 "reel_type":reel_type,"video_file":video_file,"video_url":"",
+                                 "status":"rendered_upload_failed",
+                                 **{k:script_data[k] for k in ["hook_type","save_worthy","quality_score"]}})
+                save_performance_entry(build_performance_entry(script_data, video_id=str(video_file)))
+                if logger: logger.finish({"engine":"remotion","reel_type":reel_type,
+                                          "posted":False,"error":"github_upload_failed"})
+                return
             result  = post_reel_via_make(caption, hashtags, video_url=public_url,
                                          reel_type=reel_type, script=script_data["script"],
                                          analytics=script_data)
             make_ok = result.get("status") == 200
             print(f"Make.com: {result}")
             save_reel_entry({"date":date.today().isoformat(),"engine":"remotion",
-                             "reel_type":reel_type,"video_file":video_file,
+                             "reel_type":reel_type,"video_file":video_file,"video_url":public_url,
                              "status":"posted" if make_ok else "rendered",
                              **{k:script_data[k] for k in ["hook_type","save_worthy","quality_score"]}})
             save_performance_entry(build_performance_entry(script_data, video_id=str(video_file)))
@@ -2747,17 +2831,25 @@ def main():
 
         video_url = wait_for_heygen(video_id, max_minutes=15)
         if video_url:
+            # HeyGen URLs are temporary signed links (~7 day expiry). Rehost to a
+            # permanent GitHub raw URL; fall back to the signed URL if that fails so
+            # the post still goes out today (it is valid for the immediate Make run).
+            dest_name = f"{date.today().isoformat()}-{reel_type.replace('_','-')}-{video_id[:8]}.mp4"
+            permanent_url = rehost_to_github(dest_name, source_url=video_url)
+            post_url = permanent_url or video_url
+            if not permanent_url:
+                print("  [rehost] falling back to temporary HeyGen URL for this post")
             log = load_reel_log()
             for e in log:
                 if e.get("video_id") == video_id:
-                    e["status"] = "completed"; e["video_url"] = video_url
+                    e["status"] = "completed"; e["video_url"] = post_url
             REEL_LOG_FILE.write_text(json.dumps(log, indent=2))
             result  = post_reel_via_make(script_data["caption"], script_data["hashtags"],
-                                         video_url=video_url, reel_type=reel_type,
+                                         video_url=post_url, reel_type=reel_type,
                                          script=script_data.get("script",""), analytics=script_data)
             make_ok = result.get("status") == 200
             print(f"Make.com: {result}")
-            save_performance_entry(build_performance_entry(script_data, video_id=video_id, video_url=video_url))
+            save_performance_entry(build_performance_entry(script_data, video_id=video_id, video_url=post_url))
             # Content flywheel — log high-performers + ping the collection page.
             if make_ok:
                 coll_page = detect_collection_page(script_data.get("state",""),
@@ -2767,7 +2859,7 @@ def main():
                     try:
                         si.log_content_opportunity(
                             script_data.get("topic") or reel_type, "reel",
-                            script_data.get("quality_score", 0), video_url)
+                            script_data.get("quality_score", 0), post_url)
                         print(f"  Content opportunity logged (score {script_data.get('quality_score',0)})")
                     except Exception as e:
                         print(f"  Content opportunity log failed (non-blocking): {e}")
