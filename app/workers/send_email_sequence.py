@@ -690,7 +690,7 @@ def get_step1_leads(cur, limit: int, county_filter: str | None = None) -> list[d
         WITH ranked AS (
             SELECT DISTINCT ON (LOWER(ldc.email))
                 ldc.id AS lead_id, ldc.email, ldc.full_name, ldc.debtor_name,
-                ldc.phone, ldc.confidence, ldc.trade,
+                ldc.phone, ldc.confidence, ldc.trade, ldc.lead_score,
                 c.county_name, c.state, nl.lien_type, nl.filed_date, nl.amount, nl.pdf_path
             FROM lien_dbpr_contacts ldc
             JOIN normalized_liens nl ON ldc.lien_id = nl.id
@@ -707,7 +707,9 @@ def get_step1_leads(cur, limit: int, county_filter: str | None = None) -> list[d
               )
             ORDER BY LOWER(ldc.email), ldc.dbpr_score DESC NULLS LAST, ldc.id ASC
         )
-        SELECT * FROM ranked ORDER BY lead_id LIMIT %s
+        -- Highest lead_score first so the best leads go out before the daily
+        -- cap is hit; lead_id breaks ties for deterministic ordering.
+        SELECT * FROM ranked ORDER BY lead_score DESC NULLS LAST, lead_id LIMIT %s
     """, params)
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]

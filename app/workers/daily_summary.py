@@ -655,7 +655,48 @@ def _get_email_sequence_stats(cur):
     except Exception:
         variants = []
 
+    # ── Lead scoring (lead_score lives on lien_dbpr_contacts) ──────────────────
+    avg_score_today = None
+    top_unsent: list = []
+    try:
+        cur.execute("""
+            SELECT ROUND(AVG(score)::numeric, 1) FROM (
+                SELECT DISTINCT ON (LOWER(es.to_email)) ldc.lead_score AS score
+                FROM email_sends es
+                JOIN lien_dbpr_contacts ldc ON LOWER(ldc.email) = LOWER(es.to_email)
+                WHERE es.campaign_id = %s AND es.status = 'sent'
+                  AND es.sent_at::date = CURRENT_DATE
+                ORDER BY LOWER(es.to_email), ldc.lead_score DESC NULLS LAST
+            ) x WHERE score IS NOT NULL
+        """, (CAMPAIGN_ID,))
+        r = cur.fetchone()
+        avg_score_today = float(r[0]) if r and r[0] is not None else None
+
+        cur.execute("""
+            SELECT DISTINCT ON (LOWER(ldc.email))
+                   ldc.lead_score, c.state, c.county_name, ldc.confidence
+            FROM lien_dbpr_contacts ldc
+            JOIN normalized_liens nl ON ldc.lien_id = nl.id
+            JOIN counties c ON ldc.county_id = c.id
+            WHERE ldc.email IS NOT NULL AND ldc.email != ''
+              AND ldc.email NOT LIKE '%%@example.com'
+              AND ldc.lead_score IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM email_sends es
+                  WHERE LOWER(es.to_email) = LOWER(ldc.email)
+                    AND es.campaign_id = %s
+              )
+            ORDER BY LOWER(ldc.email), ldc.lead_score DESC NULLS LAST
+        """, (CAMPAIGN_ID,))
+        scored_unsent = cur.fetchall()
+        scored_unsent.sort(key=lambda x: (x[0] or 0), reverse=True)
+        top_unsent = scored_unsent[:5]
+    except Exception:
+        pass
+
     return {
+        "avg_score_sent_today": avg_score_today,
+        "top_unsent": top_unsent,
         "total_contacts": total_contacts,
         "waiting": max(total_contacts - steps_lifetime.get(1, 0) - unsubscribed, 0),
         "steps": steps_lifetime,
@@ -850,6 +891,14 @@ def build_email_sequence_section(seq: dict) -> str:
     summary_rows += tr("Lifetime sends", f"{seq.get('sent_total',0):,}", "all 7 touches")
     summary_rows += tr("Open / click / reply rate", f"{seq.get('open_rate',0)}% / {seq.get('click_rate',0)}% / {seq.get('reply_rate',0)}%", "lifetime tracked")
     summary_rows += tr("Failed / throttled / stale queued", f"{seq.get('failed',0):,} / {seq.get('throttled',0):,} / {seq.get('stale_queued',0):,}", "health checks")
+    _avg = seq.get("avg_score_sent_today")
+    summary_rows += tr("Avg lead score (sent today)", f"{_avg}" if _avg is not None else "—", "0-100; higher = better lead")
+
+    top_unsent = seq.get("top_unsent", [])
+    unsent_rows = [[f"{(s if s is not None else '—')}", state or "?", h((county or "?")[:20]), conf or "?"]
+                   for (s, state, county, conf) in top_unsent]
+    if not unsent_rows:
+        unsent_rows = [["—", "—", "no scored unsent contacts", "—"]]
 
     step_rows = []
     for step in range(1, 8):
@@ -894,6 +943,10 @@ def build_email_sequence_section(seq: dict) -> str:
             ["Variant", "Example subject", "Sent", "Open", "Click"],
             variant_rows
         ))
+        + sec("🎯 Top Scored Unsent Leads", simple_table(
+            ["Score", "State", "County", "Confidence"],
+            unsent_rows
+        ), "Highest-scored email-ready contacts not yet contacted — these go out next.")
     )
 
 

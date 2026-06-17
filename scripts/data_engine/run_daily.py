@@ -113,6 +113,27 @@ def main():
     total_synced = sync_to_email_pipeline()
     print(f"  Total final sync: {total_synced}")
 
+    # Score the pool AFTER syncing so newly-added contacts are scored before the
+    # email send job runs (the step-1 selector orders by lead_score DESC).
+    print("\n  Scoring leads...")
+    score_logger = PipelineLogger("lead_scoring") if PipelineLogger else None
+    if score_logger:
+        score_logger.start()
+        score_logger.step_start("score_leads")
+    try:
+        from scripts.scoring.score_leads import score_all_contacts
+        sstats = score_all_contacts()
+        print(f"  Scored {sstats['scored']:,} contacts "
+              f"(avg {sstats['avg']}, hot {sstats['tiers']['80-100']:,})")
+        if score_logger:
+            score_logger.step_done("score_leads", ok=True, detail=str(sstats["tiers"]))
+            score_logger.finish(sstats)
+    except Exception as e:
+        print(f"  Lead scoring failed (non-blocking): {e}")
+        if score_logger:
+            score_logger.step_done("score_leads", ok=False, error=str(e))
+            score_logger.finish({"error": str(e)})
+
     show_collection_stats()
     close_all()
 
