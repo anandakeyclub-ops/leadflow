@@ -134,6 +134,20 @@ def main():
             score_logger.step_done("score_leads", ok=False, error=str(e))
             score_logger.finish({"error": str(e)})
 
+    # Optimize step-1 subject lines: refresh performance stats, then generate
+    # challenger variants if there are none under test or the winner decayed.
+    print("\n  Optimizing subject lines...")
+    try:
+        from scripts.optimization.subject_optimizer import track_performance, maybe_generate
+        track_performance()
+        new_ids = maybe_generate()
+        if new_ids:
+            print(f"  Generated {len(new_ids)} new AI subject variants: {new_ids}")
+        else:
+            print("  Subject variants up to date (no new variants needed)")
+    except Exception as e:
+        print(f"  Subject optimization failed (non-blocking): {e}")
+
     show_collection_stats()
     close_all()
 

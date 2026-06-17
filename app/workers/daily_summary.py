@@ -694,9 +694,25 @@ def _get_email_sequence_stats(cur):
     except Exception:
         pass
 
+    # Subject-line optimizer — active variants under management (incl. AI ones).
+    sl_optimizer = []
+    try:
+        cur.execute("""
+            SELECT variant_id, source, sends, opens, open_rate, click_rate
+            FROM subject_line_performance
+            WHERE active = TRUE
+            ORDER BY open_rate DESC NULLS LAST, sends DESC
+        """)
+        sl_optimizer = [dict(zip(
+            ["variant_id", "source", "sends", "opens", "open_rate", "click_rate"], r))
+            for r in cur.fetchall()]
+    except Exception:
+        sl_optimizer = []
+
     return {
         "avg_score_sent_today": avg_score_today,
         "top_unsent": top_unsent,
+        "sl_optimizer": sl_optimizer,
         "total_contacts": total_contacts,
         "waiting": max(total_contacts - steps_lifetime.get(1, 0) - unsubscribed, 0),
         "steps": steps_lifetime,
@@ -900,6 +916,20 @@ def build_email_sequence_section(seq: dict) -> str:
     if not unsent_rows:
         unsent_rows = [["—", "—", "no scored unsent contacts", "—"]]
 
+    # Subject-line optimizer — active variants (flag AI-generated challengers).
+    sl_rows = []
+    for v in seq.get("sl_optimizer", []):
+        flag = " 🤖 NEW (AI)" if v.get("source") == "ai" else ""
+        sl_rows.append([
+            h(v["variant_id"]) + flag,
+            f"{v.get('sends',0):,}",
+            f"{v.get('opens',0):,}",
+            f"{float(v.get('open_rate',0) or 0)}%",
+            f"{float(v.get('click_rate',0) or 0)}%",
+        ])
+    if not sl_rows:
+        sl_rows = [["—", "—", "—", "no optimizer data yet", "—"]]
+
     step_rows = []
     for step in range(1, 8):
         p24 = seq["periods"]["24h"][step]
@@ -947,6 +977,10 @@ def build_email_sequence_section(seq: dict) -> str:
             ["Score", "State", "County", "Confidence"],
             unsent_rows
         ), "Highest-scored email-ready contacts not yet contacted — these go out next.")
+        + sec("🔬 Subject Line Optimizer (bandit)", simple_table(
+            ["Variant", "Sends", "Opens", "Open %", "Click %"],
+            sl_rows
+        ), "Active variants the ε-greedy bandit picks from. 🤖 = new AI-generated challenger under test.")
     )
 
 

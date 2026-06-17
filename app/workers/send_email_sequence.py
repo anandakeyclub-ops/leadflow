@@ -48,6 +48,17 @@ from app.core.db import get_connection
 BASE_DIR = Path(__file__).resolve().parents[2]
 LOG_FILE = BASE_DIR / "email_sequence_log.json"
 
+# Subject-line optimizer (epsilon-greedy bandit). Optional — if it can't import
+# or query, choose_subject falls back to the hardcoded winner so sends never break.
+import sys as _sys
+if str(BASE_DIR) not in _sys.path:
+    _sys.path.insert(0, str(BASE_DIR))
+try:
+    from scripts.optimization import subject_optimizer
+except Exception as _e:
+    subject_optimizer = None
+    print(f"  ⚠ subject_optimizer unavailable, using hardcoded winner: {_e}")
+
 SENDER_EMAIL = os.getenv("GMAIL_SENDER", "romy@taxcasereview.org")
 APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
 SENDER_NAME = os.getenv("GMAIL_SENDER_NAME", "Romy")
@@ -404,6 +415,21 @@ def choose_subject(step: int, lead: dict, first_name: str, county: str, trade: s
     # ("Quick question about your Florida filing"); then a generic fallback.
     if step == 1:
         if county_clean:
+            # Epsilon-greedy bandit picks the variant; fall back to the proven
+            # winner if the optimizer is unavailable or errors.
+            if subject_optimizer is not None:
+                try:
+                    from collections import defaultdict
+                    variant_id, template = subject_optimizer.select_variant()
+                    subj = template.format_map(defaultdict(
+                        str,
+                        county=county_clean,
+                        state=_state_full_name(lead.get("state")) or "",
+                        trade=trade or ""))
+                    if subj.strip():
+                        return subj, variant_id
+                except Exception:
+                    pass
             return f"Quick question about your {county_clean} County filing", "s1_v1"
         state_name = _state_full_name(lead.get("state"))
         if state_name:
