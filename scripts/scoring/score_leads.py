@@ -4,12 +4,15 @@ score_leads.py
 Lead scoring for the email outreach pool (lien_dbpr_contacts — the table the
 7-touch sequence in app/workers/send_email_sequence.py actually selects from).
 
-Score is 0-100, summed from five factors:
-  Lien amount        (25)  — nl.amount
-  Lien age           (25)  — days since nl.filed_date
-  Email engagement   (20)  — opens/clicks/step from email_sends
-  State match        (15)  — counties.state
-  Contact confidence (15)  — ldc.confidence
+Score is 0-100 = sum of weight * factor, where each factor is a 0..1 tier and
+WEIGHTS sets the point budget:
+  Lien age           (35)  — days since nl.filed_date (best urgency proxy we have)
+  Email engagement   (25)  — opens/clicks/step from email_sends
+  State match        (20)  — counties.state
+  Contact confidence (20)  — ldc.confidence
+  Lien amount        ( 0)  — nl.amount; structurally dead for FL/AZ/TX (no source).
+                            Logic kept intact — set WEIGHTS['amount']>0 to
+                            reactivate once amounts are backfilled.
 
 Writes lead_score + last_scored_at onto every email-ready row. The step-1
 selector then orders by lead_score DESC so the best leads go out first.
@@ -41,68 +44,78 @@ POOL_WHERE = (
 )
 
 
-# ── Factor scorers ──────────────────────────────────────────────────────────────
+# ── Weights (point budget per factor; active weights sum to 100) ─────────────────
+# Amount is 0 because no structured lien-amount source exists for FL/AZ/TX. The
+# amount tier logic below is kept intact — bump WEIGHTS["amount"] back to 25 (and
+# trim the others) to reactivate it once amounts are backfilled.
+WEIGHTS = {
+    "age":        35,
+    "engagement": 25,
+    "state":      20,
+    "confidence": 20,
+    "amount":      0,
+}
 
-def score_amount(amount) -> int:
-    """25 pts. NULL/0 -> 8 (unknown). NOTE: the FL/TX/AZ pool currently has no
-    amount data, so this resolves to 8 for everyone until amounts are backfilled."""
+
+# ── Factor scorers — each returns a 0..1 tier; total = sum(weight * factor) ───────
+
+def amount_factor(amount) -> float:
+    """NULL/0 -> 0.32 (the original 8/25 "unknown" baseline)."""
     if amount is None or amount <= 0:
-        return 8
+        return 0.32
     if amount >= 100_000:
-        return 25
+        return 1.00
     if amount >= 50_000:
-        return 20
+        return 0.80
     if amount >= 25_000:
-        return 15
+        return 0.60
     if amount >= 10_000:
-        return 10
-    return 5
+        return 0.40
+    return 0.20
 
 
-def score_age(filed_date, today: date) -> int:
-    """25 pts. Sweet spot 6-18 months (motivated, not yet resolved). Two cases
-    not in the spec use documented defaults: missing date -> 10, <3 months -> 10
-    (too fresh / still in shock, like the bottom of the curve)."""
+def age_factor(filed_date, today: date) -> float:
+    """Sweet spot 6-18 months (motivated, not yet resolved). Missing date and
+    <3 months use the 0.40 baseline (too fresh / still in shock)."""
     if not filed_date:
-        return 10
+        return 0.40
     months = (today - filed_date).days / 30.44
     if months < 3:
-        return 10            # too fresh — documented default (spec starts at 3-6)
+        return 0.40          # too fresh
     if months < 6:
-        return 15            # 3-6 months — too fresh, still in shock
+        return 0.60          # 3-6 months — still in shock
     if months < 18:
-        return 25            # 6-18 months — sweet spot
+        return 1.00          # 6-18 months — sweet spot
     if months < 36:
-        return 20            # 18-36 months
+        return 0.80          # 18-36 months
     if months <= 60:
-        return 10            # 36-60 months
-    return 5                 # >60 months — likely resolved or given up
+        return 0.40          # 36-60 months
+    return 0.20              # >60 months — likely resolved or given up
 
 
-def score_engagement(eng) -> int:
-    """20 pts. eng = (opened, clicked, max_step) for this email, or None if the
-    contact has never been emailed (a fresh step-1 candidate)."""
+def engagement_factor(eng) -> float:
+    """eng = (opened, clicked, max_step), or None if never emailed."""
     if eng is None:
-        return 8             # no sends yet — step-1 candidate, no engagement
+        return 0.40          # no sends yet — step-1 candidate
     opened, clicked, max_step = eng
     if opened and clicked:
-        return 20
+        return 1.00
     if opened:
-        return 12
+        return 0.60
     if (max_step or 0) <= 1:
-        return 8             # no opens, only step 1 sent
-    return 3                 # no opens, already on step 2+
+        return 0.40          # no opens, only step 1 sent
+    return 0.15              # no opens, already on step 2+
 
 
-def score_state(state) -> int:
-    """15 pts — pipeline/match-rate quality by state."""
-    return {"FL": 15, "TX": 10, "AZ": 8, "GA": 5, "NY": 5, "IL": 5}.get(
-        (state or "").upper(), 5)
+def state_factor(state) -> float:
+    """Pipeline/match-rate quality by state."""
+    return {"FL": 1.00, "TX": 0.667, "AZ": 0.533,
+            "GA": 0.333, "NY": 0.333, "IL": 0.333}.get((state or "").upper(), 0.333)
 
 
-def score_confidence(conf) -> int:
-    """15 pts — enrichment contact confidence."""
-    return {"high": 15, "medium": 8, "low": 3}.get((conf or "").lower(), 3)
+def confidence_factor(conf) -> float:
+    """Enrichment contact confidence."""
+    return {"high": 1.00, "medium": 0.533, "low": 0.20}.get((conf or "").lower(), 0.20)
 
 
 def amount_range_label(amount) -> str:
@@ -168,11 +181,13 @@ def score_all_contacts(conn=None, dry_run: bool = False) -> dict:
             updates = []
             scores = []
             for (cid, email, amount, filed_date, state, conf) in rows:
-                total = (score_amount(amount)
-                         + score_age(filed_date, today)
-                         + score_engagement(eng.get((email or "").lower()))
-                         + score_state(state)
-                         + score_confidence(conf))
+                total = round(
+                    WEIGHTS["amount"]     * amount_factor(amount)
+                    + WEIGHTS["age"]        * age_factor(filed_date, today)
+                    + WEIGHTS["engagement"] * engagement_factor(eng.get((email or "").lower()))
+                    + WEIGHTS["state"]      * state_factor(state)
+                    + WEIGHTS["confidence"] * confidence_factor(conf)
+                )
                 total = max(0, min(100, total))
                 updates.append((cid, total))
                 scores.append(total)
