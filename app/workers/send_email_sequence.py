@@ -549,7 +549,9 @@ One thing people often misunderstand: a lien and a levy are not the same thing. 
 
 The better time to review options is before the levy stage.
 
-Check your risk level here: {BOOKING_LINK}
+The IRS can move from lien to levy without additional warning. Takes 60 seconds to see where you stand.
+
+{BOOKING_LINK}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -561,6 +563,8 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
 <p>One thing people often misunderstand: <strong>a lien and a levy are not the same thing.</strong></p>
 <p>A lien is the public claim. A levy is when the IRS starts taking money from accounts, wages, or payments.</p>
 <p>The better time to review options is before the levy stage.</p>
+<p style="color:#8b0000;font-size:15px;">⚠️ The IRS can move from lien to levy without additional warning.</p>
+<p><strong>Takes 60 seconds to see where you stand.</strong></p>
 {button_html(cta_label, cta_url)}
 <p>Romy<br>TaxCase Review</p>"""
 
@@ -600,9 +604,9 @@ If a federal tax lien stays unresolved, the biggest risk is usually not the lien
 
 It is what can come after it: levy notices, bank account levies, wage garnishments, or pressure on business cash flow.
 
-There are usually intervention points before things get that far.
+There are usually intervention points — but the window narrows as the IRS timeline progresses. Takes 60 seconds to see what may still apply.
 
-If you want to see where you may stand: {BOOKING_LINK}
+{BOOKING_LINK}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -612,7 +616,8 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
 <p>Hi {name},</p>
 <p>If a federal tax lien stays unresolved, the biggest risk is usually not the lien itself.</p>
 <p>It is what can come after it: <strong>levy notices, bank account levies, wage garnishments, or pressure on business cash flow.</strong></p>
-<p>There are usually intervention points before things get that far.</p>
+<p style="color:#8b0000;font-size:15px;">⚠️ There are usually intervention points — but the window narrows as the IRS timeline progresses.</p>
+<p><strong>Takes 60 seconds to see what may still apply.</strong></p>
 {button_html(cta_label, cta_url)}
 <p>Romy<br>TaxCase Review</p>"""
 
@@ -627,7 +632,9 @@ The better questions are: Are all returns filed? Is the IRS still inside the col
 
 Those answers determine the real options.
 
-You can start the review here: {BOOKING_LINK}
+Those answers take about 60 seconds to map out. No obligation.
+
+{BOOKING_LINK}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -639,6 +646,7 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
 <p>The question is not just <em>"how much is owed?"</em></p>
 <p>The better questions are: Are all returns filed? Is the IRS still inside the collection window? Is there ability to pay? Is there a lien, levy threat, or business payroll issue?</p>
 <p>Those answers determine the real options.</p>
+<p><strong>Those answers take about 60 seconds to map out. No obligation.</strong></p>
 {button_html(cta_label, cta_url)}
 <p>Romy<br>TaxCase Review</p>"""
 
@@ -651,7 +659,9 @@ For {trade}s and small business owners, IRS problems often get worse when payrol
 
 An LLC or corporation does not always protect the person responsible for payroll tax decisions.
 
-If this sounds close to your situation, start here: {BOOKING_LINK}
+The Trust Fund Recovery Penalty can follow a business owner personally — even after the business closes. Takes 60 seconds to see if this applies.
+
+{BOOKING_LINK}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -662,6 +672,8 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
 <p>If this is business-related, it is worth taking seriously.</p>
 <p>For <strong>{trade}s</strong> and small business owners, IRS problems often get worse when payroll taxes, estimated taxes, or business cash flow are involved.</p>
 <p>An LLC or corporation does not always protect the person responsible for payroll tax decisions.</p>
+<p style="color:#8b0000;font-size:15px;">⚠️ The Trust Fund Recovery Penalty can follow a business owner personally — even after the business closes.</p>
+<p><strong>Takes 60 seconds to see if this applies.</strong></p>
 {button_html(cta_label, cta_url)}
 <p>Romy<br>TaxCase Review</p>"""
 
