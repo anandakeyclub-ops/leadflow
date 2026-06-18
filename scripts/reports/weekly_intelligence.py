@@ -886,6 +886,22 @@ def main():
     except Exception as e:
         print(f"  Press release step skipped (non-blocking): {e}")
 
+    # ── Broken-link prospecting (Sundays only): find dead links on competitor/
+    # resource pages where TaxCase Review content is a replacement. Non-blocking.
+    try:
+        if date.today().weekday() == 6 and not dry_run:
+            from scripts.outreach.broken_link_finder import run as _bl_run
+            bl_logger = None
+            try:
+                from pipeline_log import PipelineLogger as _BLLogger
+                bl_logger = _BLLogger("broken_links"); bl_logger.start()
+            except Exception:
+                bl_logger = None
+            print("\n  Broken-link scan (Sunday)...")
+            _bl_run(limit=10, do_draft=True, logger=bl_logger)
+    except Exception as e:
+        print(f"  Broken-link step skipped (non-blocking): {e}")
+
     # ── Publish ───────────────────────────────────────────────────────────────
     if dry_run:
         print(f"\n  [DRY RUN — not publishing]")
