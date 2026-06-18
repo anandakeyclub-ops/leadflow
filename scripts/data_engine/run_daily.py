@@ -148,6 +148,17 @@ def main():
     except Exception as e:
         print(f"  Subject optimization failed (non-blocking): {e}")
 
+    # Refresh the verified-lien stats on the public collection pages (FL + TX)
+    # and flag counties large enough for a new page. Runs after scoring so the
+    # match-rate/email-ready numbers reflect today's freshly scored pool.
+    # Self-logs via PipelineLogger("collection_pages") for the daily summary.
+    print("\n  Updating collection pages...")
+    try:
+        from scripts.content.update_collection_pages import run as update_collection_pages
+        update_collection_pages(states=["fl", "tx"])
+    except Exception as e:
+        print(f"  Collection page update failed (non-blocking): {e}")
+
     show_collection_stats()
     close_all()
 
