@@ -46,6 +46,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+try:
+    from scripts.outreach.outreach_db import record_outreach
+except Exception:
+    try:
+        from outreach_db import record_outreach
+    except Exception:
+        record_outreach = None
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 LOG_CSV  = BASE_DIR / "data" / "outreach" / "haro_log.csv"
 
@@ -230,20 +238,17 @@ def email_draft(q: dict, response_text: str) -> bool:
 
 
 def log_query(q: dict, pri: str, score: int, drafted: bool, sent: bool) -> None:
-    LOG_CSV.parent.mkdir(parents=True, exist_ok=True)
-    new = not LOG_CSV.exists()
-    with LOG_CSV.open("a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=LOG_COLUMNS)
-        if new:
-            w.writeheader()
-        w.writerow({
-            "date": date.today().isoformat(), "outlet": q["outlet"],
-            "query_summary": (q.get("summary") or q.get("query_text", ""))[:120],
-            "priority_score": score, "priority": pri,
-            "response_drafted": "Yes" if drafted else "No",
-            "response_sent": "Yes" if sent else "No",
-            "resulted_in_coverage": "", "backlink_url": "",
-        })
+    # System of record is the backlink_outreach DB table (not CSV).
+    if record_outreach is None:
+        return
+    summary = (q.get("summary") or q.get("query_text", ""))[:120]
+    outlet  = (q.get("outlet") or "unknown").lower()
+    status  = "sent" if sent else ("drafted" if drafted else "reviewed")
+    record_outreach(
+        f"{outlet}#{summary[:24]}", "haro",
+        contact_email=q.get("submission_email", ""), subject=summary, status=status,
+        notes=f"priority={pri} score={score} deadline={q.get('deadline','')}",
+    )
 
 
 # ── IMAP fetch (live) ───────────────────────────────────────────────────────────

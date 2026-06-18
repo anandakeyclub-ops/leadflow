@@ -33,6 +33,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+try:
+    from scripts.outreach.outreach_db import record_outreach
+except Exception:
+    try:
+        from outreach_db import record_outreach
+    except Exception:
+        record_outreach = None
+
 BASE_DIR     = Path(__file__).resolve().parents[2]
 TARGETS_JSON = BASE_DIR / "data" / "outreach" / "link_targets.json"
 BROKEN_CSV   = BASE_DIR / "data" / "outreach" / "broken_links.csv"
@@ -310,9 +318,17 @@ def run(limit: int, do_draft: bool, logger=None) -> dict:
                     "anchor_text": anchor, "replacement_category": cat,
                     "replacement_url": repl_url, "subject": subject,
                     "drafted": drafted or "No", "sent": "", "date_found": today})
+                # System of record: backlink_outreach DB table (one row per source page).
+                if record_outreach is not None:
+                    record_outreach(
+                        urlparse(url).netloc or url, "broken_link",
+                        subject=subject, status="drafted" if drafted == "Yes" else "pending",
+                        published_url=repl_url,
+                        notes=f"broken: {absu} ({cat})")
 
+    # broken_links.csv keeps the raw dead-link findings; outreach opportunities
+    # now live in the backlink_outreach table (not OUTREACH_CSV).
     _append_csv(BROKEN_CSV, BROKEN_COLS, broken_rows)
-    _append_csv(OUTREACH_CSV, OUTREACH_COLS, outreach_rows)
     print(f"\n  Pages scanned: {pages_ok} | broken links: {len(broken_rows)} | "
           f"replaceable opportunities: {len(outreach_rows)}")
     if logger:

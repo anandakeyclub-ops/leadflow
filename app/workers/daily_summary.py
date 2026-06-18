@@ -1026,20 +1026,19 @@ def build_outreach_section(runs: list[dict]) -> str:
     press  = latest("press_release")
     broken = latest("broken_links")
 
-    gp_rows  = _outreach_csv("guest_post_tracker.csv")
-    pr_rows  = _outreach_csv("press_release_log.csv")
-    bl_rows  = _outreach_csv("broken_link_outreach.csv")
-    dir_rows = _outreach_csv("directory_list.csv")
-
-    gp_total  = sum(1 for r in gp_rows if r.get("pitched_date"))
-    gp_resp   = sum(1 for r in gp_rows
-                    if (r.get("response_status") or "").lower() in ("responded", "accepted", "replied"))
-    pr_month  = sum(1 for r in pr_rows
-                    if (r.get("date") or "").startswith(month_prefix) and r.get("drafted") == "Yes")
-    bl_total  = len(bl_rows)
-    dir_sub   = sum(1 for r in dir_rows if (r.get("submitted") or "").strip().lower() == "yes")
-    backlinks = sum(1 for rows in (gp_rows, bl_rows, dir_rows)
-                    for r in rows if (r.get("backlink_url") or "").strip())
+    # Cumulative stats from the backlink_outreach DB table.
+    try:
+        from scripts.outreach.outreach_db import get_counts
+        cum = get_counts() or {}
+    except Exception as e:
+        print(f"  ⚠ outreach counts unavailable: {e}")
+        cum = {}
+    gp_total  = cum.get("guest_post_total", 0)
+    gp_resp   = cum.get("guest_post_responses", 0)
+    pr_month  = cum.get("press_release_month", 0)
+    bl_total  = cum.get("broken_link_total", 0)
+    dir_sub   = cum.get("directories_submitted", 0)
+    backlinks = cum.get("backlinks_confirmed", 0)
 
     def status(ran: bool, scheduled: bool) -> str:
         if not scheduled:
@@ -1064,8 +1063,8 @@ def build_outreach_section(runs: list[dict]) -> str:
         ["Directories submitted (total / 30)", f"{dir_sub} / 30", "—"],
         ["Confirmed backlinks earned", f"{backlinks}", "—"],
     ]
-    note = ("Today's activity from the pipeline log; cumulative from data/outreach "
-            "tracker CSVs. Status: ✅ ran today · ❌ scheduled but missing · ➖ not scheduled today.")
+    note = ("Today's activity from the pipeline log; cumulative from the "
+            "backlink_outreach table. Status: ✅ ran today · ❌ scheduled but missing · ➖ not scheduled today.")
     return sec("🔗 Outreach Engine",
                simple_table(["Metric", "Value", "Status"], rows), note)
 

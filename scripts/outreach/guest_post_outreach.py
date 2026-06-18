@@ -39,6 +39,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+try:
+    from scripts.outreach.outreach_db import record_outreach, rows_for
+except Exception:
+    try:
+        from outreach_db import record_outreach, rows_for
+    except Exception:
+        record_outreach = None
+        rows_for = None
+
 BASE_DIR     = Path(__file__).resolve().parents[2]
 TARGETS_JSON = BASE_DIR / "data" / "outreach" / "guest_post_targets.json"
 TRACKER_CSV  = BASE_DIR / "data" / "outreach" / "guest_post_tracker.csv"
@@ -253,30 +262,30 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
-def _tracker_rows() -> list[dict]:
-    if not TRACKER_CSV.exists():
-        return []
-    with TRACKER_CSV.open(encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+def _gp_rows() -> list[dict]:
+    """Guest-post rows from the backlink_outreach table (system of record)."""
+    return rows_for("guest_post") if rows_for else []
 
 
-def _write_tracker(rows: list[dict]) -> None:
-    TRACKER_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with TRACKER_CSV.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=TRACKER_COLUMNS)
-        w.writeheader(); w.writerows(rows)
-
-
-def pitched_today(rows: list[dict]) -> int:
-    today = date.today().isoformat()
-    return sum(1 for r in rows if r.get("pitched_date") == today)
+def _pitched_today(rows: list[dict]) -> int:
+    today = date.today()
+    n = 0
+    for r in rows:
+        pa = r.get("pitched_at")
+        if pa is not None and hasattr(pa, "date") and pa.date() == today:
+            n += 1
+    return n
 
 
 def send_pitches(limit: int, logger=None) -> dict:
+    if record_outreach is None:
+        print("  outreach DB unavailable — cannot record pitches")
+        if logger: logger.finish({"pitches_sent": 0, "error": "no_db"})
+        return {"pitches_sent": 0}
     targets = load_targets()
-    rows = _tracker_rows()
-    already = {r["target"] for r in rows if r.get("pitched_date")}
-    budget = min(limit, DAILY_PITCH_CAP - pitched_today(rows))
+    rows = _gp_rows()
+    already = {r["domain"] for r in rows if r.get("pitched_at")}
+    budget = min(limit, DAILY_PITCH_CAP - _pitched_today(rows))
     if budget <= 0:
         print(f"  Daily cap reached ({DAILY_PITCH_CAP}/day). Nothing sent.")
         if logger: logger.finish({"pitches_sent": 0, "cap_reached": True})
@@ -285,7 +294,7 @@ def send_pitches(limit: int, logger=None) -> dict:
     for t in targets:
         if sent >= budget:
             break
-        if t["name"] in already:
+        if t["domain"] in already:
             continue
         to = t.get("editor_email", "")
         if not to:
@@ -293,39 +302,40 @@ def send_pitches(limit: int, logger=None) -> dict:
             continue
         pitch = generate_pitch(t)
         ok = send_email(to, pitch["subject"], pitch["full"].split("BODY:", 1)[-1].strip())
-        rows.append({"target": t["name"], "contact_email": to,
-                     "pitched_date": date.today().isoformat() if ok else "",
-                     "response_status": "pitched" if ok else "send_failed",
-                     "article_assigned": "", "published_date": "", "backlink_url": ""})
+        record_outreach(t["domain"], "guest_post", contact_email=to,
+                        subject=pitch["subject"],
+                        pitched_at=date.today().isoformat() if ok else None,
+                        status="pitched" if ok else "send_failed")
         if ok:
             sent += 1
             print(f"  [sent] {t['name']} -> {to}")
-    _write_tracker(rows)
     print(f"\n  Pitches sent: {sent} (cap {DAILY_PITCH_CAP}/day)")
     if logger: logger.finish({"pitches_sent": sent})
     return {"pitches_sent": sent}
 
 
 def send_followups(logger=None) -> dict:
-    rows = _tracker_rows()
+    if record_outreach is None:
+        if logger: logger.finish({"followups_sent": 0, "error": "no_db"})
+        return {"followups_sent": 0}
+    rows   = _gp_rows()
     cutoff = date.today() - timedelta(days=FOLLOWUP_DAYS)
+    names  = {t["domain"]: t.get("name", t["domain"]) for t in load_targets()}
     sent = 0
     for r in rows:
-        if (r.get("response_status") == "pitched" and r.get("pitched_date")
-                and r.get("contact_email")):
-            try:
-                pd = datetime.strptime(r["pitched_date"], "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            if pd <= cutoff:
-                body = (f"Hi — following up on my note about guest article ideas for "
-                        f"{r['target']}'s audience on IRS tax-lien risks for contractors "
-                        f"and small businesses. Happy to send a full draft on whichever "
-                        f"angle fits. Thank you! — Romy Cruz, TaxCase Review")
-                if send_email(r["contact_email"], f"Following up: guest post ideas for {r['target']}", body):
-                    r["response_status"] = "followed_up"; sent += 1
-                    print(f"  [follow-up] {r['target']}")
-    _write_tracker(rows)
+        pa = r.get("pitched_at")
+        if (r.get("status") != "pitched" or not pa or not r.get("contact_email")
+                or not hasattr(pa, "date") or pa.date() > cutoff):
+            continue
+        name = names.get(r["domain"], r["domain"])
+        body = (f"Hi — following up on my note about guest article ideas for "
+                f"{name}'s audience on IRS tax-lien risks for contractors and small "
+                f"businesses. Happy to send a full draft on whichever angle fits. "
+                f"Thank you! — Romy Cruz, TaxCase Review")
+        if send_email(r["contact_email"], f"Following up: guest post ideas for {name}", body):
+            record_outreach(r["domain"], "guest_post", status="followed_up")
+            sent += 1
+            print(f"  [follow-up] {name}")
     print(f"\n  Follow-ups sent: {sent}")
     if logger: logger.finish({"followups_sent": sent})
     return {"followups_sent": sent}

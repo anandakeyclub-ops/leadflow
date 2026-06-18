@@ -36,6 +36,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+try:
+    from scripts.outreach.outreach_db import record_outreach
+except Exception:
+    try:
+        from outreach_db import record_outreach
+    except Exception:
+        record_outreach = None
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_OPS = BASE_DIR / "data" / "ops"
 PR_DIR   = BASE_DIR / "data" / "outreach" / "press_releases"
@@ -295,21 +303,17 @@ def submit_to_services(pr_text: str, headline: str) -> list[str]:
 
 def log_entry(d: dict, headline: str, reasons: list[str], drafted: bool,
               emailed: bool, submitted_services: list[str]) -> None:
-    LOG_CSV.parent.mkdir(parents=True, exist_ok=True)
-    new = not LOG_CSV.exists()
-    with LOG_CSV.open("a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=LOG_COLUMNS)
-        if new:
-            w.writeheader()
-        w.writerow({
-            "date": d["date"], "headline": headline, "state": d["state"],
-            "trigger_reasons": " | ".join(reasons),
-            "drafted": "Yes" if drafted else "No",
-            "emailed_for_review": "Yes" if emailed else "No",
-            "submitted": "Yes" if submitted_services else "No",
-            "submitted_services": ", ".join(submitted_services),
-            "resulted_in_coverage": "", "backlink_url": "",
-        })
+    # System of record is the backlink_outreach DB table (not CSV).
+    if record_outreach is None or not drafted:
+        return
+    slug = re.sub(r"[^a-z0-9]+", "-", headline.lower())[:40]
+    status = "submitted" if submitted_services else "drafted"
+    record_outreach(
+        f"pr-{d['date']}-{slug}", "press_release",
+        subject=headline, pitched_at=d["date"] or None, status=status,
+        notes=(f"state={d['state']}; emailed={'y' if emailed else 'n'}; "
+               f"triggers: {' | '.join(reasons)}"),
+    )
 
 
 # ── Entry point used by weekly_intelligence.py ───────────────────────────────────
