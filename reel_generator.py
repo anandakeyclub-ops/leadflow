@@ -1959,6 +1959,9 @@ def _extract_section(text: str, section: str) -> str:
             rest   = _strip_md_value(cleaned.split(":", 1)[1])
             if rest: result.append(rest)
             continue
+        elif cleaned.upper().strip("#*-> ").strip() == sec_u:
+            inside = True
+            continue
         if inside:
             if any(_strip_md(line).upper().startswith(f"{s}:") for s in stops):
                 break
