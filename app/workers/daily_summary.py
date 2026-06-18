@@ -1245,8 +1245,8 @@ def build_content_automation_section(runs: list[dict]) -> str:
         detail = f"{m.get('updated', 0)} updated · {m.get('counties', 0)} counties tracked"
         if m.get("new_drafts"):
             detail += f" · {m.get('new_drafts')} new-page drafts"
-        if m.get("deployed"):
-            detail += " · deployed"
+        if m.get("published"):
+            detail += " · published"
         rows.append(["Collection pages", _status_chip(cp.get("status") == "ok"), detail])
     else:
         rows.append(["Collection pages", _status_chip(False), "no run logged today"])

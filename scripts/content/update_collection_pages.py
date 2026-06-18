@@ -17,8 +17,8 @@ What it does (v1 scope: Florida + Texas):
   3. Detect Florida counties with >= --threshold liens that have NO entry in
      floridaCounties[] yet — report them as "new page" drafts (does NOT publish
      a new county unless --publish-new is given).
-  4. POST the Vercel deploy hook (VERCEL_DEPLOY_HOOK_URL) so the static pages
-     rebuild, if the env var is set.
+  4. Pushing the file to GitHub triggers Vercel's auto-deploy — the pages
+     rebuild on their own (no deploy hook needed).
   5. Log a PipelineLogger("collection_pages") record so the daily summary's
      "Content Automation" section shows pages updated / drafts created.
 
@@ -53,7 +53,6 @@ from app.core.db import get_connection, release_connection  # noqa: E402
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "anandakeyclub-ops/v0-tax-resolution-landing-page")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
-VERCEL_DEPLOY_HOOK_URL = os.getenv("VERCEL_DEPLOY_HOOK_URL", "")
 
 # Path of the generated data file inside the frontend repo.
 TARGET_PATH = "lib/seo-data/live-lien-stats.ts"
@@ -225,21 +224,6 @@ def github_put_file(path: str, content: str, message: str, sha: str | None) -> b
     return ok
 
 
-def trigger_deploy() -> bool:
-    if not VERCEL_DEPLOY_HOOK_URL:
-        print("  VERCEL_DEPLOY_HOOK_URL not set — skipping deploy trigger "
-              "(content pushed; Vercel must rebuild via Git integration).")
-        return False
-    try:
-        r = requests.post(VERCEL_DEPLOY_HOOK_URL, timeout=20)
-        ok = r.status_code in (200, 201)
-        print(f"  Vercel deploy hook: {r.status_code}")
-        return ok
-    except Exception as e:
-        print(f"  Vercel deploy hook failed (non-blocking): {e}")
-        return False
-
-
 # ── Code generation ───────────────────────────────────────────────────────────
 def render_ts(stats: dict[str, dict[str, dict]], generated_at: str) -> str:
     """Render the live-lien-stats.ts file deterministically."""
@@ -379,20 +363,21 @@ def run(states: list[str] | None = None, dry_run: bool = False,
     updated = sum(1 for slug, n in now.items() if prev.get(slug) != n)
     content_changed = strip_timestamp(new_ts) != strip_timestamp(old_ts or "")
 
-    published = deployed = False
+    published = False
     if dry_run:
         print(f"  [DRY RUN] would publish {counties_with_data} counties "
               f"({updated} changed); content_changed={content_changed}")
     elif counties_with_data == 0:
         print("  No county data — skipping publish (DB empty or unreachable).")
     elif not content_changed:
-        print("  No change since last publish — skipping GitHub PUT + deploy.")
+        print("  No change since last publish — skipping GitHub PUT.")
     else:
         msg = (f"content: refresh verified lien stats — {counties_with_data} counties, "
                f"{updated} changed [{today}]")
         published = github_put_file(TARGET_PATH, new_ts, msg, old_sha)
         if published:
-            deployed = trigger_deploy()
+            # Pushing to main triggers Vercel's auto-deploy — no hook needed.
+            print("  Published — Vercel auto-deploy will rebuild the pages.")
 
     # Optional auto-publish of new FL counties (off by default per "draft" policy).
     if publish_new and new_drafts and not dry_run:
@@ -407,16 +392,14 @@ def run(states: list[str] | None = None, dry_run: bool = False,
         "new_drafts": len(new_drafts),
         "draft_slugs": [d["slug"] for d in new_drafts],
         "published": published,
-        "deployed": deployed,
     }
     if logger:
         logger.step_done(
             "publish", ok=(published or dry_run or not content_changed),
-            detail=f"updated:{updated} drafts:{len(new_drafts)} "
-                   f"published:{published} deployed:{deployed}")
+            detail=f"updated:{updated} drafts:{len(new_drafts)} published:{published}")
         logger.finish(result)
     print(f"  Collection pages: updated={updated}, new drafts={len(new_drafts)}, "
-          f"published={published}, deployed={deployed}")
+          f"published={published}")
     return result
 
 
