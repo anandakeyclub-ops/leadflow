@@ -1193,6 +1193,68 @@ def enrich_normalized_liens(county: str = None,
 
 
 
+# ── Hardened email acceptance (lien-matched company enrichment) ─────────────────
+DIRECTORY_EMAIL_DOMAINS = {
+    "yelp.com", "yellowpages.com", "bbb.org", "manta.com", "linkedin.com",
+    "facebook.com", "instagram.com", "angi.com", "homeadvisor.com",
+    "thumbtack.com", "houzz.com",
+    # B2B data / SaaS aggregators that surface as the top result and whose
+    # on-page emails are NOT the business's (caught in the first TX run):
+    "zippia.com", "seamless.ai", "rocketreach.co", "apollo.io", "crunchbase.com",
+    "dispatchcore.io", "hvacservice.io", "geothermalfinder.com", "heartwork.com",
+    "buildzoom.com", "nsnlookup.com", "pacermonitor.com", "trellis.law",
+}
+GENERIC_EMAIL_PROVIDERS = {
+    "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com",
+    "icloud.com", "live.com", "msn.com", "comcast.net", "att.net", "verizon.net",
+}
+ROLE_LOCALPARTS = {"info", "contact", "admin", "webmaster", "noreply", "no-reply"}
+MIN_EMAIL_CONFIDENCE = 0.7
+_BIZ_STOP = {"the", "and", "llc", "inc", "corp", "co", "company", "services",
+             "service", "solutions", "group", "of"}
+
+
+def registrable_domain(host: str) -> str:
+    host = (host or "").lower().split(":")[0].strip(".")
+    host = re.sub(r"^www\.", "", host)
+    parts = host.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
+def evaluate_email(email: str, business_name: str, site_url: str) -> tuple[float, str]:
+    """Hardened acceptance. Returns (confidence 0-1, reason).
+    Rejects directory/generic-provider/role addresses and any email whose domain
+    doesn't match the business website domain; scores the rest 0-1."""
+    email = (email or "").lower().strip()
+    if "@" not in email:
+        return 0.0, "no_email"
+    local, _, edom = email.partition("@")
+    e_reg    = registrable_domain(edom)
+    site_dom = registrable_domain(urlparse(site_url).netloc)
+    if e_reg in DIRECTORY_EMAIL_DOMAINS:
+        return 0.0, "directory_email"
+    if e_reg in GENERIC_EMAIL_PROVIDERS:
+        return 0.0, "generic_provider"
+    if local in ROLE_LOCALPARTS:
+        return 0.0, "role_address"
+    if site_dom and e_reg != site_dom:
+        return 0.0, "domain_mismatch"
+    # Require the business name to appear in the email domain. This is what
+    # separates a real owned domain (blazeair.com for BLAZE AIR) from a SaaS/
+    # aggregator domain that merely surfaced as the top result (dispatchcore.io,
+    # zippia.com, ...). Without this, an aggregator's own email matches its own
+    # site domain and slips through.
+    btoks = [t for t in re.split(r"[^a-z0-9]+", (business_name or "").lower())
+             if len(t) > 2 and t not in _BIZ_STOP]
+    dom_squashed = e_reg.replace(".", "")
+    if not any(t in dom_squashed for t in btoks):
+        return 0.0, "unrelated_domain"
+    conf = 0.9                       # owned, name-matching domain
+    if re.search(r"[a-z]", local):
+        conf += 0.1                  # has a real local part
+    return min(conf, 1.0), "ok"
+
+
 def enrich_normalized_contacts(state: str = "TX", limit: int = 100,
                                dry_run: bool = False, min_score: int = 65) -> dict:
     """
@@ -1249,6 +1311,8 @@ def enrich_normalized_contacts(state: str = "TX", limit: int = 100,
               f"(score>={min_score}, company-format)")
         enriched = 0
         failed   = 0
+        stats = {"searched": 0, "with_website": 0, "valid_email": 0,
+                 "rejected": {}, "found_domains": []}
 
         for i, (cid, biz, city, score) in enumerate(rows):
             # business_city is often "HOUSTON TX" — drop a trailing state token.
@@ -1266,55 +1330,69 @@ def enrich_normalized_contacts(state: str = "TX", limit: int = 100,
                 break
 
             print(f"  [{i+1}/{len(rows)}] [{api}] {biz[:38]:<38} "
-                  f"({cty or '—'}, {st}) score={score}", end=" ... ", flush=True)
+                  f"({cty or '-'}, {st}) score={score}", end=" ... ", flush=True)
 
-            urls  = search_for_website(biz, cty, st)
+            stats["searched"] += 1
+            urls = search_for_website(biz, cty, st)
             time.sleep(1.0)
-            email = None
-            for url in (urls or []):
-                email = scrape_email_from_url(url)
-                if email:
+            # drop directory results before scraping
+            site_urls = [u for u in (urls or [])
+                         if registrable_domain(urlparse(u).netloc) not in DIRECTORY_EMAIL_DOMAINS]
+            if site_urls:
+                stats["with_website"] += 1
+
+            chosen, chosen_conf, reason = None, 0.0, ("no_results" if not urls else "no_email")
+            for url in site_urls[:3]:
+                em = scrape_email_from_url(url)
+                if not em:
+                    continue
+                conf, why = evaluate_email(em, biz, url)
+                if conf >= MIN_EMAIL_CONFIDENCE:
+                    chosen, chosen_conf, reason = em.lower().strip(), conf, "ok"
+                    chosen_dom = registrable_domain(em.partition("@")[2])
                     break
+                reason = why
+                stats["rejected"][why] = stats["rejected"].get(why, 0) + 1
 
             if dry_run:
-                if email and not is_junk_email(email, biz):
-                    print(f"[DRY RUN] would save {email}  (via {urls[0][:48]})")
-                elif email:
-                    print(f"[DRY RUN] junk filtered: {email}")
-                elif urls:
-                    print(f"[DRY RUN] site found, no email ({urls[0][:48]})")
+                if chosen:
+                    print(f"[DRY RUN] would save (conf {chosen_conf:.2f}) @{chosen.partition('@')[2]}")
                 else:
-                    print("[DRY RUN] no results")
+                    print(f"[DRY RUN] no valid email ({reason})")
                 continue
 
-            if email and not is_junk_email(email, biz):
+            if chosen:
+                conf_label = "high" if chosen_conf >= 0.85 else "medium"
                 with conn.cursor() as cur:
                     cur.execute("""
                         UPDATE normalized_contacts
-                        SET email = %s, email_source = 'cse_scrape',
-                            email_confidence = 'medium', updated_at = NOW()
+                        SET email = %s, email_source = 'serpapi_scrape',
+                            email_confidence = %s, updated_at = NOW()
                         WHERE id = %s
-                    """, (email.lower().strip(), cid))
+                    """, (chosen, conf_label, cid))
                 conn.commit()
                 enriched += 1
-                print(f"✅ {email}")
+                stats["valid_email"] += 1
+                stats["found_domains"].append(chosen_dom)
+                print(f"OK conf {chosen_conf:.2f} @{chosen_dom}")
             else:
-                # Mark as attempted so re-runs don't re-search this row.
-                with conn.cursor() as cur:
+                with conn.cursor() as cur:   # mark attempted so re-runs skip it
                     cur.execute("""
                         UPDATE normalized_contacts
-                        SET email_source = 'cse_attempted', updated_at = NOW()
+                        SET email_source = 'serpapi_attempted', updated_at = NOW()
                         WHERE id = %s
                     """, (cid,))
                 conn.commit()
                 failed += 1
-                print(f"⚠ junk filtered: {email}" if email else "no email found")
+                print(f"rejected ({reason})")
 
-        print(f"\n  Enriched : {enriched:,}")
-        print(f"  Failed   : {failed:,}")
-        if enriched + failed:
-            print(f"  Rate     : {enriched/(enriched+failed)*100:.1f}%")
-        return {"enriched": enriched, "failed": failed}
+        print(f"\n  -- TX enrichment results --")
+        print(f"  Searched          : {stats['searched']}")
+        print(f"  Returned a website: {stats['with_website']}")
+        print(f"  Valid email saved : {stats['valid_email']}")
+        print(f"  Rejected by filter: {dict(sorted(stats['rejected'].items()))}")
+        print(f"  Sample domains    : {stats['found_domains'][:3]}")
+        return {"enriched": enriched, "failed": failed, **stats}
 
     finally:
         conn.close()
