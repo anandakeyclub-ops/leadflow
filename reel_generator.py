@@ -832,6 +832,17 @@ def parse_retention_rows(raw: str) -> list[dict]:
         if "|" not in line:
             continue
         parts = [p.strip() for p in line.split("|")]
+        # Drop empty leading/trailing elements from border pipes (| a | b | c |)
+        # so parts[0]=time, parts[1]=reset, parts[2]=editor_note.
+        while parts and parts[0] == "":
+            parts.pop(0)
+        while parts and parts[-1] == "":
+            parts.pop()
+        if not parts:
+            continue
+        # Skip markdown separator rows like |---|---|.
+        if all(p and set(p) <= set("-:") for p in parts):
+            continue
         rows.append({
             "time": parts[0] if len(parts) > 0 else "",
             "reset": parts[1] if len(parts) > 1 else "",
