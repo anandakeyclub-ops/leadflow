@@ -805,6 +805,18 @@ def parse_pipe_rows(raw: str, min_rows: int = 0) -> list[dict]:
         if "|" not in line:
             continue
         parts = [p.strip() for p in line.split("|")]
+        # A leading/trailing pipe (| a | b | c |) produces empty first/last
+        # elements that shift every column right by one — drop them so
+        # parts[0]=time, parts[1]=visual, parts[2]=overlay, parts[3]=editor_note.
+        while parts and parts[0] == "":
+            parts.pop(0)
+        while parts and parts[-1] == "":
+            parts.pop()
+        if not parts:
+            continue
+        # Skip markdown separator rows like |---|---|---| or |:--|:-:|--:|.
+        if all(p and set(p) <= set("-:") for p in parts):
+            continue
         rows.append({
             "time": parts[0] if len(parts) > 0 else "",
             "visual": parts[1] if len(parts) > 1 else "",
