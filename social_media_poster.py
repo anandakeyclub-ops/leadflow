@@ -2595,60 +2595,88 @@ def main():
     else:
         post_type = "tax_horror_story"
 
-    stats   = get_weekly_lien_stats(state_key)
-    context = {
-        "state":      state_key,
-        "county":     stats.get("county", random.choice(state_cfg["counties"])),
-        "count":      stats.get("count", 0),
-        "last_week":  stats.get("last_week"),
-        "pct_change": stats.get("pct_change", 0),
-        "largest":    stats.get("largest", random.randint(45000, 890000)),
-        "notice":     args.notice or get_notice_for_this_week(),
-    }
+    def build_context(skey):
+        """Assemble the prompt context for a state (with cross-script county dedupe)."""
+        scfg = STATES.get(skey, STATES["florida"])
+        st   = get_weekly_lien_stats(skey)
+        ctx  = {
+            "state":      skey,
+            "county":     st.get("county", random.choice(scfg["counties"])),
+            "count":      st.get("count", 0),
+            "last_week":  st.get("last_week"),
+            "pct_change": st.get("pct_change", 0),
+            "largest":    st.get("largest", random.randint(45000, 890000)),
+            "notice":     args.notice or get_notice_for_this_week(),
+        }
+        # If the reel script already posted this county today, pick another so
+        # the two engines don't overlap.
+        if HAS_SHARED and si.is_duplicate_today("social", ctx["county"]):
+            alts = [c for c in scfg["counties"]
+                    if c.lower() != str(ctx["county"]).lower()]
+            if alts:
+                new_county = random.choice(alts)
+                print(f"  Cross-script dedupe: {ctx['county']} already posted today "
+                      f"by reel — switching to {new_county}")
+                ctx["county"] = new_county
+        return ctx, scfg
 
-    # Cross-script coordination — if the reel script already posted this county
-    # today, switch to a different county so the two engines don't overlap.
-    if HAS_SHARED and si.is_duplicate_today("social", context["county"]):
-        alts = [c for c in state_cfg["counties"]
-                if c.lower() != str(context["county"]).lower()]
-        if alts:
-            new_county = random.choice(alts)
-            print(f"  Cross-script dedupe: {context['county']} already posted today "
-                  f"by reel — switching to {new_county}")
-            context["county"] = new_county
+    if logger: logger.step_start("generate_post")
+
+    # Quality gate with up to 3 attempts. Attempt 1 = today's pick; retry 1 =
+    # same state with a different post type; retry 2 = force Florida (which has
+    # real lien data and consistently scores higher). Take the first attempt
+    # that meets QUALITY_THRESHOLD; only log a quality rejection if all three
+    # fall short. --force skips retries and posts the first attempt.
+    all_types   = list(dict.fromkeys(type_map.values()))
+    alts1       = [t for t in all_types if t != post_type]
+    retry1_type = random.choice(alts1) if alts1 else post_type
+    plan = [(post_type, state_key), (retry1_type, state_key)]
+    if state_key != "florida":
+        plan.append((post_type, "florida"))
+    else:
+        alts2 = [t for t in all_types if t not in (post_type, retry1_type)]
+        plan.append((random.choice(alts2) if alts2 else post_type, "florida"))
+    if args.force:
+        plan = [(post_type, state_key)]
+
+    ctx_cache = {}
+    text = scores = None
+    for i, (a_type, a_state) in enumerate(plan, 1):
+        if a_state not in ctx_cache:
+            ctx_cache[a_state] = build_context(a_state)
+        context, state_cfg   = ctx_cache[a_state]
+        post_type, state_key = a_type, a_state
+        label = "Generating" if i == 1 else f"Retry {i - 1}:"
+        print(f"{label} {a_type} post for {state_cfg['name']} ({args.platform})...\n")
+        text, scores = generate_ai_post(a_type, context, platform=args.platform)
+        if args.force or scores["total"] >= QUALITY_THRESHOLD:
+            break
+        print(f"  Score {scores['total']}/100 < {QUALITY_THRESHOLD} — retrying...\n")
 
     image = get_image_for_post(post_type)
 
-    if logger: logger.step_start("generate_post")
-    print(f"Generating {post_type} post for {state_cfg['name']} ({args.platform})...\n")
-
-    text, scores = generate_ai_post(post_type, context, platform=args.platform)
-
-    # Quality gate — regenerate once if below threshold
+    # All attempts below threshold → log a quality rejection (generation worked,
+    # the post was just too weak) so the daily summary shows it distinctly.
     if scores["total"] < QUALITY_THRESHOLD and not args.force:
-        print(f"  Score {scores['total']}/100 < {QUALITY_THRESHOLD} — regenerating...\n")
-        text, scores = generate_ai_post(post_type, context, platform=args.platform)
-        if scores["total"] < QUALITY_THRESHOLD and not args.force:
-            print(f"  Score still {scores['total']}/100. Use --force to post anyway.")
-            if not args.dry_run:
-                # Log the rejection instead of returning silently, so the daily
-                # summary shows "⚠️ quality rejected (NN/100)" rather than a
-                # ❌ missing run (generation worked; the post was just too weak).
-                if logger:
-                    logger.step_done(
-                        "generate_post", ok=True,
-                        detail=f"{state_cfg['name']} | {post_type} | score {scores['total']}/100")
-                    logger.finish({
-                        "post_type": post_type,
-                        "state":     state_key,
-                        "county":    context["county"],
-                        "platform":  args.platform,
-                        "sent":      False,
-                        "quality":   scores["total"],
-                        "threshold": QUALITY_THRESHOLD,
-                        "reason":    "below_quality_threshold",
-                    }, status="quality_rejected")
-                return
+        print(f"  All {len(plan)} attempts < {QUALITY_THRESHOLD} "
+              f"(last {scores['total']}/100). Use --force to post anyway.")
+        if not args.dry_run:
+            if logger:
+                logger.step_done(
+                    "generate_post", ok=True,
+                    detail=f"{state_cfg['name']} | {post_type} | score {scores['total']}/100")
+                logger.finish({
+                    "post_type": post_type,
+                    "state":     state_key,
+                    "county":    context["county"],
+                    "platform":  args.platform,
+                    "sent":      False,
+                    "quality":   scores["total"],
+                    "threshold": QUALITY_THRESHOLD,
+                    "reason":    "below_quality_threshold",
+                    "attempts":  len(plan),
+                }, status="quality_rejected")
+            return
 
     if already_posted(text):
         print("Similar post in history — regenerating...\n")
