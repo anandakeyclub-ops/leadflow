@@ -27,8 +27,10 @@ import argparse
 import csv
 import json
 import os
+import re
 import smtplib
 import ssl
+import time
 from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -53,8 +55,18 @@ TARGETS_JSON = BASE_DIR / "data" / "outreach" / "guest_post_targets.json"
 TRACKER_CSV  = BASE_DIR / "data" / "outreach" / "guest_post_tracker.csv"
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+SERPAPI_KEY       = os.getenv("SERPAPI_KEY", "")
 DAILY_PITCH_CAP   = 5
 FOLLOWUP_DAYS     = 7
+
+# Email discovery: regex + editorial-prefix priority + junk filter.
+EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+EDITORIAL_PREFIXES = ("editor", "editorial", "contribute", "contributor",
+                      "submissions", "submission", "submit", "tips", "pitch",
+                      "press", "news")
+_EMAIL_JUNK = ("example.com", "example.org", "domain.com", "yourdomain.com",
+               "email.com", "sentry.io", "wixpress.com", "godaddy.com",
+               ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css")
 
 ROMY_BIO = ("Romy Cruz, Licensed Tax Professional and former IRS Revenue Officer, "
             "lead advisor at TaxCase Review (taxcasereview.org). She represents "
@@ -157,30 +169,128 @@ def save_targets(targets: list[dict]) -> None:
 
 
 # ── Research (web search) ─────────────────────────────────────────────────────
-def research_target(t: dict) -> dict:
-    """Best-effort enrichment via Google CSE (reuses GOOGLE_SEARCH_API_KEY).
-    Populates guidelines_url, editor_email, tax_articles, accepts_guest_posts.
-    Non-fatal: leaves fields blank if the API/quota is unavailable."""
-    key = os.getenv("GOOGLE_SEARCH_API_KEY", "")
-    cse = os.getenv("GOOGLE_CSE_ID", "")
-    if not key or not cse:
-        print(f"    [research] {t['name']}: no Google CSE creds — skipped")
-        return t
-    def cse_search(q: str) -> list[dict]:
-        try:
-            r = requests.get("https://www.googleapis.com/customsearch/v1",
-                             params={"key": key, "cx": cse, "q": q, "num": 5}, timeout=15)
-            return r.json().get("items", []) if r.status_code == 200 else []
-        except Exception:
+def _serpapi_search(query: str, num: int = 8) -> list[dict]:
+    """Run one SerpAPI Google search; return organic_results (or [] on any error)."""
+    if not SERPAPI_KEY:
+        return []
+    try:
+        r = requests.get("https://serpapi.com/search.json",
+                         params={"engine": "google", "q": query,
+                                 "num": num, "api_key": SERPAPI_KEY},
+                         timeout=20)
+        if r.status_code != 200:
             return []
-    # Guidelines / write-for-us
-    for it in cse_search(f'site:{t["domain"].split("/")[0]} "write for us" OR "contributor" OR "submission guidelines"'):
-        t["guidelines_url"] = it.get("link", ""); t["accepts_guest_posts"] = True; break
-    # Past tax/IRS coverage
-    t["tax_articles"] = [it.get("link", "") for it in
-                         cse_search(f'site:{t["domain"].split("/")[0]} (IRS OR "tax lien" OR "tax debt")')][:3]
-    print(f"    [research] {t['name']}: guidelines={'yes' if t['guidelines_url'] else 'n/a'}, "
-          f"tax_articles={len(t['tax_articles'])}")
+        return r.json().get("organic_results", []) or []
+    except Exception:
+        return []
+
+
+def _extract_emails(text: str) -> list[str]:
+    """Pull plausible email addresses out of free text, dropping obvious junk."""
+    out: list[str] = []
+    for m in EMAIL_RE.findall(text or ""):
+        e = m.strip().strip(".").lower()
+        if any(j in e for j in _EMAIL_JUNK):
+            continue
+        if e not in out:
+            out.append(e)
+    return out
+
+
+def _score_email(email: str, base_domain: str) -> int:
+    """Rank an email by how likely it's the right editorial contact.
+    4 = editorial prefix on the publication's own domain; 3 = own domain;
+    2 = editorial prefix on any domain; 1 = anything else."""
+    local, _, dom = email.partition("@")
+    is_editorial = any(local.startswith(p) for p in EDITORIAL_PREFIXES)
+    domain_match = bool(base_domain) and (dom == base_domain or dom.endswith("." + base_domain))
+    if is_editorial and domain_match:
+        return 4
+    if domain_match:
+        return 3
+    if is_editorial:
+        return 2
+    return 1
+
+
+def _fetch_page_emails(url: str) -> list[str]:
+    """Fetch a page and scan its HTML for email addresses. Best-effort."""
+    try:
+        r = requests.get(url, timeout=15,
+                         headers={"User-Agent": "Mozilla/5.0 (guest-post-research)"})
+        if r.status_code != 200:
+            return []
+        return _extract_emails(r.text)
+    except Exception:
+        return []
+
+
+_GUIDELINE_HINTS = ("write-for-us", "write for us", "contribute", "contributor",
+                    "submission", "submit", "guidelines", "editorial", "contact")
+
+
+def research_target(t: dict) -> dict:
+    """Best-effort enrichment via SerpAPI: find an editor/contributor email and a
+    submissions/guidelines URL for the publication.
+
+    Searches SerpAPI twice (guest-post angle + editorial-contact angle), harvests
+    emails from result titles/snippets/URLs, then fetches the top organic result
+    and scans its HTML for domain/editorial-pattern emails. The best-scoring email
+    is stored in editor_email; if none is found a submissions/contact URL is kept
+    in guidelines_url so the target isn't left empty. Rate-limited to ~1 req/sec.
+    Non-fatal: leaves fields blank if SerpAPI is unavailable."""
+    if not SERPAPI_KEY:
+        print(f"    [research] {t['name']}: no SERPAPI_KEY — skipped")
+        return t
+
+    name = t["name"]
+    base_domain = t["domain"].split("/")[0].lower()
+    queries = [
+        f"{name} write for us guest post editor email",
+        f"{name} editorial contact submissions",
+    ]
+
+    candidates: dict[str, int] = {}      # email -> best score seen
+    guidelines_url = t.get("guidelines_url", "")
+    top_url = ""
+
+    for i, q in enumerate(queries):
+        for it in _serpapi_search(q):
+            link    = it.get("link", "") or ""
+            title   = it.get("title", "") or ""
+            snippet = it.get("snippet", "") or ""
+            for e in _extract_emails(" ".join([title, snippet, link])):
+                candidates[e] = max(candidates.get(e, 0), _score_email(e, base_domain))
+            if not top_url and link:
+                top_url = link
+            # Remember a plausible submissions/guidelines page as a fallback.
+            if not guidelines_url and any(h in (link + " " + title).lower()
+                                          for h in _GUIDELINE_HINTS):
+                guidelines_url = link
+                t["accepts_guest_posts"] = True
+        if i < len(queries) - 1:
+            time.sleep(1)  # rate-limit between SerpAPI searches
+
+    # Scan the top organic result page for emails (often a contact/contribute page).
+    if top_url:
+        time.sleep(1)
+        for e in _fetch_page_emails(top_url):
+            candidates[e] = max(candidates.get(e, 0), _score_email(e, base_domain))
+
+    # Pick the best candidate; require an editorial prefix or domain match (>=2).
+    best = ""
+    if candidates:
+        email, score = max(candidates.items(), key=lambda kv: kv[1])
+        if score >= 2:
+            best = email
+    if best:
+        t["editor_email"] = best
+    # Keep a submissions/contact URL so the target isn't left empty.
+    if guidelines_url and not t.get("guidelines_url"):
+        t["guidelines_url"] = guidelines_url
+
+    print(f"    [research] {name}: editor_email={t.get('editor_email') or 'n/a'}, "
+          f"guidelines={'yes' if t.get('guidelines_url') else 'n/a'}")
     return t
 
 
@@ -400,10 +510,16 @@ def main() -> None:
         sample_pitches(args.sample_pitches); return
     if args.research:
         targets = load_targets()
-        for t in targets[:args.limit]:
-            research_target(t)
-        save_targets(targets)
-        print(f"  Researched {min(args.limit, len(targets))} targets."); return
+        n = min(args.limit, len(targets))
+        for i, t in enumerate(targets[:args.limit], 1):
+            try:
+                research_target(t)
+            except Exception as e:
+                print(f"    [research] {t['name']}: error — {e}")
+            # Persist after each target so progress survives a mid-run error.
+            save_targets(targets)
+            print(f"    [research] saved progress ({i}/{n})")
+        print(f"  Researched {n} targets."); return
     if args.draft_article:
         if not args.target or not args.topic:
             print("  --draft-article needs --target and --topic"); return
