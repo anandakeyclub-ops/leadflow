@@ -1234,9 +1234,7 @@ def evaluate_email(email: str, business_name: str, site_url: str) -> tuple[float
     if e_reg in DIRECTORY_EMAIL_DOMAINS:
         return 0.0, "directory_email"
     if e_reg in GENERIC_EMAIL_PROVIDERS:
-        return 0.0, "generic_provider"
-    if local in ROLE_LOCALPARTS:
-        return 0.0, "role_address"
+        return 0.0, "generic_provider"   # rejects info@gmail.com, contact@yahoo.com, etc.
     if site_dom and e_reg != site_dom:
         return 0.0, "domain_mismatch"
     # Require the business name to appear in the email domain. This is what
@@ -1249,10 +1247,14 @@ def evaluate_email(email: str, business_name: str, site_url: str) -> tuple[float
     dom_squashed = e_reg.replace(".", "")
     if not any(t in dom_squashed for t in btoks):
         return 0.0, "unrelated_domain"
-    conf = 0.9                       # owned, name-matching domain
-    if re.search(r"[a-z]", local):
-        conf += 0.1                  # has a real local part
-    return min(conf, 1.0), "ok"
+    # Role addresses (info@/contact@/admin@...) are ACCEPTED on the business's own
+    # name-matching domain — generic-provider role addresses were already rejected
+    # above. They just score slightly below a personal local part.
+    is_role = local in ROLE_LOCALPARTS
+    conf = 0.8 if is_role else 0.9
+    if not is_role and re.search(r"[a-z]", local):
+        conf += 0.1                  # personal-looking local part
+    return min(conf, 1.0), ("ok_role" if is_role else "ok")
 
 
 def enrich_normalized_contacts(state: str = "TX", limit: int = 100,
