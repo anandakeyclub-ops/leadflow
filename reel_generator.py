@@ -2187,7 +2187,7 @@ def _first_visual_cue(script_data: dict) -> str:
         return (cues[0].get("type") or "").strip()
     sb = script_data.get("visual_storyboard") or []
     if sb and isinstance(sb[0], dict):
-        return (sb[0].get("cue") or sb[0].get("type") or "").strip()
+        return (sb[0].get("cue") or sb[0].get("type") or sb[0].get("visual") or "").strip()
     return ""
 
 
