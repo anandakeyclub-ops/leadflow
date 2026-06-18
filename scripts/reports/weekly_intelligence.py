@@ -864,6 +864,28 @@ def main():
     print(f"  Social queue: {len(sq)} posts")
     print(f"  Newsletter queue: {len(nq)} items")
 
+    # ── Press release: if this week's data is newsworthy, draft a release and
+    # email it to Romy for review. Auto-submission to PR services stays OFF
+    # (gated by PR_SUBMIT_ENABLED) until the output is reviewed. Non-blocking.
+    try:
+        from scripts.outreach.press_release_generator import maybe_generate_from_report
+        pr_logger = None
+        try:
+            from pipeline_log import PipelineLogger as _PRLogger
+            pr_logger = _PRLogger("press_release")
+            pr_logger.start()
+        except Exception:
+            pr_logger = None
+        print("\n  Press release check...")
+        maybe_generate_from_report(
+            report_path=report_file,
+            logger=pr_logger,
+            email_review=not dry_run,   # email Romy on live runs only
+            submit=False,               # auto-submit disabled pending review
+        )
+    except Exception as e:
+        print(f"  Press release step skipped (non-blocking): {e}")
+
     # ── Publish ───────────────────────────────────────────────────────────────
     if dry_run:
         print(f"\n  [DRY RUN — not publishing]")
