@@ -968,9 +968,9 @@ def call_claude(prompt: str, max_tokens: int = 900) -> str:
     r = requests.post("https://api.anthropic.com/v1/messages",
         headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"},
-        json={"model": "claude-sonnet-4-5", "max_tokens": max_tokens,
+        json={"model": "claude-sonnet-4-6", "max_tokens": max_tokens,
               "messages": [{"role": "user", "content": prompt}]},
-        timeout=60)
+        timeout=120)
     r.raise_for_status()
     return r.json()["content"][0]["text"].strip()
 
