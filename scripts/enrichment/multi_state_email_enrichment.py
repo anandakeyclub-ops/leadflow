@@ -1707,11 +1707,11 @@ def main():
         st = (args.state or "tx").upper()
         quota = get_quota_status()
         print(f"\n{'='*65}")
-        print(f"  Normalized Contacts Enrichment (Google CSE) — lien-matched")
+        print(f"  Normalized Contacts Enrichment (SerpAPI) — lien-matched")
         print(f"  State    : {st}")
         print(f"  Min score: {args.min_score}")
         print(f"  Limit    : {args.limit}")
-        print(f"  Google   : {quota['google_remaining']} queries remaining today")
+        print(f"  SerpAPI  : {quota['serpapi_used']} searches used today")
         print(f"  {'DRY RUN' if args.dry_run else 'LIVE'}")
         print(f"{'='*65}\n")
         enrich_normalized_contacts(

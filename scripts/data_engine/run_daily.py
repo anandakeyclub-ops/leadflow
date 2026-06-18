@@ -108,6 +108,27 @@ def main():
         if logger:
             logger.finish({**stats, "synced": synced})
 
+    # TX: enrich newly lien-matched contacts' emails via SerpAPI (TX days only),
+    # BEFORE the final sync so any emails found here get forwarded into the email
+    # pipeline. Non-blocking; logs via PipelineLogger for the daily summary.
+    if "tx" in states:
+        el = PipelineLogger("tx_contact_enrichment") if PipelineLogger else None
+        if el:
+            el.start()
+        try:
+            from scripts.enrichment.multi_state_email_enrichment import enrich_normalized_contacts
+            print("\n  TX normalized_contacts enrichment (SerpAPI)...")
+            res = enrich_normalized_contacts(state="tx", limit=50, dry_run=False)
+            metrics = ({k: res.get(k) for k in
+                        ("enriched", "failed", "searched", "with_website", "valid_email")}
+                       if isinstance(res, dict) else {"result": str(res)})
+            if el:
+                el.finish(metrics)
+        except Exception as e:
+            print(f"  TX enrichment skipped (non-blocking): {e}")
+            if el:
+                el.finish({"error": str(e)})
+
     # Final safety sync across everything (catches anything left at email_step=0).
     print("\n  Final cross-state sync...")
     total_synced = sync_to_email_pipeline()
