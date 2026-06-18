@@ -1229,8 +1229,12 @@ def enrich_normalized_contacts(state: str = "TX", limit: int = 100,
                   AND (email IS NULL OR email = '')
                   AND match_score >= %s
                   AND business_name IS NOT NULL
-                  AND business_name NOT LIKE '%%, %%'   -- company-format only
                   AND LENGTH(business_name) > 3
+                  AND business_name NOT LIKE '%%, %%'   -- exclude "LAST, FIRST"
+                  AND business_name LIKE '%% %%'        -- multi-token (exclude single-token names)
+                  -- require a business indicator (also drops "Firstname Lastname"
+                  -- personal names, which carry no indicator):
+                  AND business_name ~* '\\y(LLC|INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|SERVICES?|SOLUTIONS|GROUP|CONTRACTORS?|HVAC|ROOFING|PLUMBING|ELECTRIC|ELECTRICAL|CONSTRUCTION|TRUCKING|TRANSPORT|LOGISTICS|RESTAURANT|MANAGEMENT|PROPERTIES|REALTY|CONSULTING)\\y'
                   AND email_source IS NULL              -- skip already-attempted
                 ORDER BY match_score DESC, id
                 LIMIT %s
