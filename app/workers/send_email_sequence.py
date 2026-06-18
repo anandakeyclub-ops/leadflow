@@ -573,7 +573,11 @@ That is not how most cases are actually resolved.
 
 Depending on the facts, possible paths may include an installment agreement, penalty relief, currently-not-collectible status, lien withdrawal, or an Offer in Compromise.
 
-The starting point is knowing which path fits your situation: {BOOKING_LINK}
+Takes 60 seconds. No obligation. You will see which options may apply to your specific situation.
+
+The IRS 10-year collection clock is running on most liens. Options narrow over time.
+
+{BOOKING_LINK}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -584,7 +588,8 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
 <p>A lot of people wait because they assume the IRS only gives two choices: pay everything now or get forced into collection.</p>
 <p><strong>That is not how most cases are actually resolved.</strong></p>
 <p>Depending on the facts, possible paths may include an installment agreement, penalty relief, currently-not-collectible status, lien withdrawal, or an Offer in Compromise.</p>
-<p>The starting point is knowing which path fits your situation.</p>
+<p><strong>Takes 60 seconds. No obligation.</strong> You will see which options may apply to your specific situation.</p>
+<p style="color:#8b0000;font-size:15px;">⚠️ The IRS 10-year collection clock is running on most liens. Options narrow over time.</p>
 {button_html(cta_label, cta_url)}
 <p>Romy<br>TaxCase Review</p>"""
 
