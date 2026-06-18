@@ -992,6 +992,84 @@ def build_email_sequence_section(seq: dict, sender: dict | None = None) -> str:
     )
 
 
+def _outreach_csv(name: str) -> list[dict]:
+    p = BASE_DIR / "data" / "outreach" / name
+    if not p.exists():
+        return []
+    try:
+        import csv as _csv
+        with p.open(encoding="utf-8") as f:
+            return list(_csv.DictReader(f))
+    except Exception:
+        return []
+
+
+def build_outreach_section(runs: list[dict]) -> str:
+    """Consolidated link-building / PR outreach panel. Today's activity comes from
+    the pipeline log (haro_monitor / guest_post_outreach / press_release /
+    broken_links run records); cumulative stats come from the data/outreach
+    tracker CSVs the scripts write. (There is no backlink_outreach DB table — the
+    trackers are CSV-based — so cumulative figures are read from those.)"""
+    now = datetime.now()
+    is_sunday = now.weekday() == 6
+    month_prefix = now.strftime("%Y-%m")
+
+    def latest(rt: str):
+        matches = [r for r in runs if r.get("run_type") == rt]
+        return max(matches, key=lambda r: r.get("started", ""), default=None)
+
+    def metric(run, key, default=0):
+        return (run or {}).get("metrics", {}).get(key, default)
+
+    haro   = latest("haro_monitor")
+    guest  = latest("guest_post_outreach")
+    press  = latest("press_release")
+    broken = latest("broken_links")
+
+    gp_rows  = _outreach_csv("guest_post_tracker.csv")
+    pr_rows  = _outreach_csv("press_release_log.csv")
+    bl_rows  = _outreach_csv("broken_link_outreach.csv")
+    dir_rows = _outreach_csv("directory_list.csv")
+
+    gp_total  = sum(1 for r in gp_rows if r.get("pitched_date"))
+    gp_resp   = sum(1 for r in gp_rows
+                    if (r.get("response_status") or "").lower() in ("responded", "accepted", "replied"))
+    pr_month  = sum(1 for r in pr_rows
+                    if (r.get("date") or "").startswith(month_prefix) and r.get("drafted") == "Yes")
+    bl_total  = len(bl_rows)
+    dir_sub   = sum(1 for r in dir_rows if (r.get("submitted") or "").strip().lower() == "yes")
+    backlinks = sum(1 for rows in (gp_rows, bl_rows, dir_rows)
+                    for r in rows if (r.get("backlink_url") or "").strip())
+
+    def status(ran: bool, scheduled: bool) -> str:
+        if not scheduled:
+            return badge("➖ n/a", "#f1f5f9", "#64748b")
+        return (badge("✅ ran", "#dcfce7", "#15803d") if ran
+                else badge("❌ missed", "#fee2e2", "#b91c1c"))
+
+    rows = [
+        ["HARO queries reviewed today", f"{metric(haro, 'reviewed', 0):,}",
+         status(haro is not None, True)],
+        ["HARO high-priority drafts sent to Romy", f"{metric(haro, 'drafts_sent', 0):,}",
+         status(haro is not None, True)],
+        ["Guest post pitches sent (today / total)",
+         f"{metric(guest, 'pitches_sent', 0)} / {gp_total}",
+         status(guest is not None, guest is not None)],
+        ["Guest post responses received", f"{gp_resp}", "—"],
+        ["Press releases generated this month", f"{pr_month}",
+         status(press is not None, is_sunday)],
+        ["Broken-link opportunities (today / total)",
+         f"{metric(broken, 'opportunities', 0)} / {bl_total}",
+         status(broken is not None, is_sunday)],
+        ["Directories submitted (total / 30)", f"{dir_sub} / 30", "—"],
+        ["Confirmed backlinks earned", f"{backlinks}", "—"],
+    ]
+    note = ("Today's activity from the pipeline log; cumulative from data/outreach "
+            "tracker CSVs. Status: ✅ ran today · ❌ scheduled but missing · ➖ not scheduled today.")
+    return sec("🔗 Outreach Engine",
+               simple_table(["Metric", "Value", "Status"], rows), note)
+
+
 def build_lead_database_section(lead: dict, states: list[dict], counties: list[dict]) -> str:
     rows = ""
     rows += tr("Liens total", f"{lead.get('liens_total',0):,}", f"+{lead.get('liens_24h',0):,} 24h · +{lead.get('liens_7d',0):,} 7d · +{lead.get('liens_30d',0):,} 30d")
@@ -1497,6 +1575,7 @@ def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, 
     {build_traffic_section(ga4, clarity, ux)}
     {build_booking_section(bk or {})}
     {build_email_sequence_section(seq, _sender)}
+    {build_outreach_section(_pipeline_runs)}
     {data_section}
 
     <p style="margin-top:28px;color:#64748b;font-size:12px;border-top:1px solid #e2e8f0;padding-top:14px">
