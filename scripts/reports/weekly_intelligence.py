@@ -1,14 +1,18 @@
 """
-weekly_intelligence.py  (v2)
+weekly_intelligence.py  (v3)
 =============================
 Generates the TaxCase Review Weekly Intelligence Report.
 
-CHANGES IN V2:
-  - Fixed GSC date range — was returning 0 impressions due to wrong query
-  - Now uses 28-day window for totals (matches test_gsc_connection.py)
-  - Added 7-day window for "this week" comparison
-  - Impressions now correctly reflect 64+ real impressions
-  - Fixed monthly lien stat context (shows all-time vs new this week clearly)
+CHANGES IN V3:
+  - Fixed table name: normalized_liens → lien_dbpr_contacts (matches pipeline)
+  - Updated model: claude-sonnet-4-5 → claude-sonnet-4-6
+  - Fixed silent fallback: DB errors now raise explicitly instead of using
+    hardcoded stale data that would publish as real
+  - Fixed state rotation: report prompt now uses the featured state, not
+    hardcoded Florida. Florida lien data always shown as primary data source,
+    featured state context added as secondary section.
+  - Schedule docstring corrected: Monday 7:30 AM (matches Task Scheduler)
+  - Data source label (LIVE/ESTIMATED) printed in pipeline logs
 
 Pulls from:
   - LeadFlow DB (lien counts, county breakdown)
@@ -142,10 +146,9 @@ STATES = {
     },
 }
 
-# Rotate states weekly so each state gets a report every 10 weeks
-# Florida gets weekly due to DB data availability
+# Florida always shown as primary data. Other states rotate as featured context.
 WEEKLY_STATE_ROTATION = [
-    "florida","texas","georgia","arizona","california",
+    "texas","georgia","arizona","california",
     "new_york","north_carolina","illinois","ohio","pennsylvania",
 ]
 
@@ -158,66 +161,130 @@ except ImportError:
 
 # ── DB: lien intelligence ─────────────────────────────────────────────────────
 
+def _resolve_lien_table(cur) -> str:
+    """
+    Find the correct lien table name by checking information_schema.
+    Returns 'lien_dbpr_contacts' if it exists, falls back to 'normalized_liens'.
+    Raises RuntimeError if neither exists.
+    """
+    cur.execute("""
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN ('lien_dbpr_contacts', 'normalized_liens')
+        ORDER BY
+          CASE table_name
+            WHEN 'lien_dbpr_contacts' THEN 1
+            WHEN 'normalized_liens'   THEN 2
+          END
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+    if not row:
+        raise RuntimeError(
+            "Neither lien_dbpr_contacts nor normalized_liens table found in DB. "
+            "Check DB connection and schema."
+        )
+    return row[0]
+
+
+def _resolve_date_col(cur, table: str) -> str:
+    """Return the date column to use for recency queries."""
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = %s
+          AND column_name IN ('filed_date', 'created_at', 'lien_date')
+        ORDER BY
+          CASE column_name
+            WHEN 'filed_date'  THEN 1
+            WHEN 'created_at'  THEN 2
+            WHEN 'lien_date'   THEN 3
+          END
+        LIMIT 1
+    """, (table,))
+    row = cur.fetchone()
+    return row[0] if row else "created_at"
+
+
 def get_lien_intelligence() -> dict:
+    """
+    Pull live lien data from the DB.
+    Raises on DB errors — never silently falls back to hardcoded data
+    when the DB is reachable but queries fail.
+    If HAS_DB is False (module not importable), returns clearly-labeled
+    estimated data for use in non-DB environments only.
+    """
     if not HAS_DB:
+        print("  ⚠  DATA SOURCE: ESTIMATED (DB module not importable — using placeholder)")
         return {
-            "total_liens":          17552,
-            "new_this_week":        247,
-            "new_last_week":        198,
-            "pct_change":           24.7,
-            "top_counties": [
-                {"county": "Miami-Dade", "count": 89,  "last_week": 71},
-                {"county": "Martin",     "count": 41,  "last_week": 28},
-                {"county": "Lake",       "count": 38,  "last_week": 35},
-                {"county": "Manatee",    "count": 31,  "last_week": 29},
-                {"county": "Pasco",      "count": 24,  "last_week": 18},
-            ],
-            "high_growth_counties": [
-                {"county": "Martin",     "pct": 46.4},
-                {"county": "Pasco",      "pct": 33.3},
-                {"county": "Miami-Dade", "pct": 25.4},
-            ],
-            "week_of": date.today().strftime("%B %d, %Y"),
+            "total_liens":          0,
+            "new_this_week":        0,
+            "new_last_week":        0,
+            "pct_change":           0.0,
+            "top_counties":         [],
+            "high_growth_counties": [],
+            "week_of":              date.today().strftime("%B %d, %Y"),
+            "data_source":          "estimated",
         }
 
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM normalized_liens")
+            table    = _resolve_lien_table(cur)
+            date_col = _resolve_date_col(cur, table)
+            print(f"  DATA SOURCE: LIVE — table={table}, date_col={date_col}")
+
+            cur.execute(f"SELECT COUNT(*) FROM {table}")
             total = cur.fetchone()[0]
 
-            cur.execute("""
+            cur.execute(f"""
                 SELECT
-                    COUNT(*) FILTER (WHERE created_at >= NOW()-INTERVAL '7 days')  AS tw,
-                    COUNT(*) FILTER (WHERE created_at >= NOW()-INTERVAL '14 days'
-                                     AND  created_at <  NOW()-INTERVAL '7 days')   AS lw
-                FROM normalized_liens
+                    COUNT(*) FILTER (WHERE {date_col} >= NOW()-INTERVAL '7 days')  AS tw,
+                    COUNT(*) FILTER (WHERE {date_col} >= NOW()-INTERVAL '14 days'
+                                     AND  {date_col} <  NOW()-INTERVAL '7 days')   AS lw
+                FROM {table}
             """)
             r = cur.fetchone()
             tw, lw = r[0] or 0, r[1] or 0
             pct    = round((tw - lw) / max(lw, 1) * 100, 1)
 
-            cur.execute("""
-                SELECT
-                    c.county_name,
-                    COUNT(*) FILTER (WHERE nl.created_at >= NOW()-INTERVAL '7 days')  AS tw,
-                    COUNT(*) FILTER (WHERE nl.created_at >= NOW()-INTERVAL '14 days'
-                                     AND  nl.created_at <  NOW()-INTERVAL '7 days')   AS lw
-                FROM normalized_liens nl
-                JOIN counties c ON c.id = nl.county_id
-                WHERE nl.created_at >= NOW() - INTERVAL '14 days'
-                GROUP BY c.county_name
-                ORDER BY tw DESC
-                LIMIT 8
-            """)
-            counties = [{"county": r[0], "count": r[1] or 0,
-                         "last_week": r[2] or 0}
+            # County breakdown — try joining counties table, fall back to county_name col
+            try:
+                cur.execute(f"""
+                    SELECT
+                        c.county_name,
+                        COUNT(*) FILTER (WHERE nl.{date_col} >= NOW()-INTERVAL '7 days')  AS tw,
+                        COUNT(*) FILTER (WHERE nl.{date_col} >= NOW()-INTERVAL '14 days'
+                                         AND  nl.{date_col} <  NOW()-INTERVAL '7 days')   AS lw
+                    FROM {table} nl
+                    JOIN counties c ON c.id = nl.county_id
+                    WHERE nl.{date_col} >= NOW() - INTERVAL '14 days'
+                    GROUP BY c.county_name
+                    ORDER BY tw DESC
+                    LIMIT 8
+                """)
+            except Exception:
+                # Fall back to county_name column directly
+                cur.execute(f"""
+                    SELECT
+                        county_name,
+                        COUNT(*) FILTER (WHERE {date_col} >= NOW()-INTERVAL '7 days')  AS tw,
+                        COUNT(*) FILTER (WHERE {date_col} >= NOW()-INTERVAL '14 days'
+                                         AND  {date_col} <  NOW()-INTERVAL '7 days')   AS lw
+                    FROM {table}
+                    WHERE {date_col} >= NOW() - INTERVAL '14 days'
+                      AND county_name IS NOT NULL
+                    GROUP BY county_name
+                    ORDER BY tw DESC
+                    LIMIT 8
+                """)
+
+            counties = [{"county": r[0], "count": r[1] or 0, "last_week": r[2] or 0}
                         for r in cur.fetchall()]
 
             high_growth = sorted(
                 [{"county": c["county"],
-                  "pct": round((c["count"]-c["last_week"]) /
-                               max(c["last_week"], 1)*100, 1)}
+                  "pct": round((c["count"] - c["last_week"]) /
+                               max(c["last_week"], 1) * 100, 1)}
                  for c in counties if c["count"] > 0],
                 key=lambda x: x["pct"], reverse=True
             )[:3]
@@ -230,19 +297,18 @@ def get_lien_intelligence() -> dict:
                 "top_counties":         counties[:5],
                 "high_growth_counties": high_growth,
                 "week_of":              date.today().strftime("%B %d, %Y"),
+                "data_source":          "live",
             }
     finally:
         conn.close()
 
 
-# ── GSC: search performance (FIXED) ──────────────────────────────────────────
+# ── GSC: search performance ───────────────────────────────────────────────────
 
 def get_gsc_intelligence() -> dict:
     """
-    Pull GSC data correctly.
-    Uses 28-day window for totals (matches verified test output).
-    Uses 7-day window for weekly comparison.
-    GSC has a 3-day data delay — account for this.
+    Pull GSC data. Uses 28-day window for totals, 7-day for weekly comparison.
+    GSC has a 3-day data delay — accounted for.
     """
     try:
         from google.oauth2.credentials import Credentials
@@ -250,18 +316,16 @@ def get_gsc_intelligence() -> dict:
         from googleapiclient.discovery import build
 
         SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
-        creds  = Credentials.from_authorized_user_file(
-            str(GSC_TOKEN_FILE), SCOPES)
+        creds  = Credentials.from_authorized_user_file(str(GSC_TOKEN_FILE), SCOPES)
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
             GSC_TOKEN_FILE.write_text(creds.to_json())
 
         service = build("searchconsole", "v1", credentials=creds)
 
-        # Date ranges — account for 3-day GSC delay
-        end_date    = date.today() - timedelta(days=3)
-        start_28d   = end_date - timedelta(days=28)
-        start_7d    = end_date - timedelta(days=7)
+        end_date  = date.today() - timedelta(days=3)
+        start_28d = end_date - timedelta(days=28)
+        start_7d  = end_date - timedelta(days=7)
 
         def query(start, dimensions, limit=20, order="impressions"):
             try:
@@ -272,28 +336,22 @@ def get_gsc_intelligence() -> dict:
                         "endDate":    str(end_date),
                         "dimensions": dimensions,
                         "rowLimit":   limit,
-                        "orderBy":    [{"fieldName": order,
-                                        "sortOrder": "DESCENDING"}],
+                        "orderBy":    [{"fieldName": order, "sortOrder": "DESCENDING"}],
                     }
                 ).execute().get("rows", [])
             except Exception as e:
                 print(f"  ⚠  GSC query error: {e}")
                 return []
 
-        # 28-day totals (verified working)
-        rows_28d      = query(start_28d, ["query"], limit=50)
-        pages_28d     = query(start_28d, ["page"],  limit=50)
+        rows_28d  = query(start_28d, ["query"], limit=50)
+        pages_28d = query(start_28d, ["page"],  limit=50)
+        rows_7d   = query(start_7d,  ["query"], limit=20)
 
-        # 7-day for weekly snapshot
-        rows_7d       = query(start_7d,  ["query"], limit=20)
-
-        # Calculate totals from 28-day data
-        total_impr_28d  = sum(int(r.get("impressions", 0)) for r in pages_28d)
+        total_impr_28d   = sum(int(r.get("impressions", 0)) for r in pages_28d)
         total_clicks_28d = sum(int(r.get("clicks", 0)) for r in pages_28d)
-        total_impr_7d   = sum(int(r.get("impressions", 0)) for r in
-                              query(start_7d, ["page"], limit=50))
+        total_impr_7d    = sum(int(r.get("impressions", 0)) for r in
+                               query(start_7d, ["page"], limit=50))
 
-        # Top queries 28 days
         top_queries = [
             {
                 "query":       r["keys"][0],
@@ -305,11 +363,9 @@ def get_gsc_intelligence() -> dict:
             for r in rows_28d[:10]
         ]
 
-        # Top pages
         top_pages = [
             {
-                "page":        r["keys"][0].replace(
-                               "https://taxcasereview.org", ""),
+                "page":        r["keys"][0].replace("https://taxcasereview.org", ""),
                 "impressions": int(r.get("impressions", 0)),
                 "clicks":      int(r.get("clicks", 0)),
                 "position":    round(r.get("position", 0), 1),
@@ -317,7 +373,6 @@ def get_gsc_intelligence() -> dict:
             for r in pages_28d[:10]
         ]
 
-        # Opportunities: impressions but no clicks
         opportunities = [
             {
                 "query":       r["keys"][0],
@@ -331,7 +386,6 @@ def get_gsc_intelligence() -> dict:
             and r.get("position", 99) <= 100
         ][:8]
 
-        # Rising pages (7d)
         rising = sorted(
             [{"page": r["keys"][0].replace("https://taxcasereview.org", ""),
               "impressions": int(r.get("impressions", 0))}
@@ -341,15 +395,15 @@ def get_gsc_intelligence() -> dict:
         )[:5]
 
         return {
-            "top_queries":            top_queries,
-            "top_pages":              top_pages,
-            "opportunities":          opportunities,
-            "rising_pages":           rising,
-            "total_clicks_28d":       total_clicks_28d,
-            "total_impressions_28d":  total_impr_28d,
-            "total_impressions_7d":   total_impr_7d,
-            "period_28d":             f"{start_28d} to {end_date}",
-            "period_7d":              f"{start_7d} to {end_date}",
+            "top_queries":           top_queries,
+            "top_pages":             top_pages,
+            "opportunities":         opportunities,
+            "rising_pages":          rising,
+            "total_clicks_28d":      total_clicks_28d,
+            "total_impressions_28d": total_impr_28d,
+            "total_impressions_7d":  total_impr_7d,
+            "period_28d":            f"{start_28d} to {end_date}",
+            "period_7d":             f"{start_7d} to {end_date}",
         }
 
     except Exception as e:
@@ -363,7 +417,7 @@ def get_gsc_intelligence() -> dict:
         }
 
 
-# ── Claude: report generation ─────────────────────────────────────────────────
+# ── Claude report generation ──────────────────────────────────────────────────
 
 def call_claude(prompt: str, max_tokens: int = 2000) -> str:
     r = requests.post(
@@ -374,7 +428,7 @@ def call_claude(prompt: str, max_tokens: int = 2000) -> str:
             "content-type":      "application/json",
         },
         json={
-            "model":      "claude-sonnet-4-5",
+            "model":      "claude-sonnet-4-6",  # updated from 4-5
             "max_tokens": max_tokens,
             "messages":   [{"role": "user", "content": prompt}],
         },
@@ -384,27 +438,23 @@ def call_claude(prompt: str, max_tokens: int = 2000) -> str:
     return r.json()["content"][0]["text"].strip()
 
 
-
 # ── Quality scoring ───────────────────────────────────────────────────────────
 
 def score_report(content: str, state_name: str) -> dict:
-    """
-    Score a generated report 0-100 across 5 dimensions.
-    Reject below 70 and regenerate.
-    """
+    """Score a generated report 0-100. Reject below 70."""
     t = content.lower()
+    import re as _re
 
-    # 1. Specificity (25) — uses real data, county names, dollar amounts, specific numbers
+    # 1. Specificity (25)
     sp = 0
     if state_name.lower() in t: sp += 5
-    import re as _re
     if _re.search(r'\d{1,3}(,\d{3})*\s*(liens|filings|cases)', t): sp += 8
     county_hits = sum(1 for w in ["county","parish","borough"] if w in t)
     sp += min(8, county_hits * 4)
     if _re.search(r'\$[\d,]+', t): sp += 4
     sp = min(25, sp)
 
-    # 2. Human voice (25) — reads like a person, not a document
+    # 2. Human voice (25)
     hv = 0
     human_phrases = [
         "here's what","nobody tells","most people","the thing is","what actually",
@@ -418,7 +468,7 @@ def score_report(content: str, state_name: str) -> dict:
     hv += 10 if not any(p in t for p in compliance_phrases) else 0
     hv = min(25, hv)
 
-    # 3. Actionability (20) — tells reader what to do, not just what happened
+    # 3. Actionability (20)
     ac = 0
     action_phrases = [
         "what to do","first step","your next","take action","call","quiz",
@@ -429,7 +479,7 @@ def score_report(content: str, state_name: str) -> dict:
     if "taxcasereview.org/quiz" in t or "/quiz" in t: ac += 8
     ac = min(20, ac)
 
-    # 4. SEO signals (15) — keywords, location tags, search intent phrases
+    # 4. SEO signals (15)
     seo = 0
     seo_phrases = ["irs tax lien","federal tax lien","tax debt","tax resolution",
                    "offer in compromise","installment agreement","penalty abatement",
@@ -438,7 +488,7 @@ def score_report(content: str, state_name: str) -> dict:
     if state_name.lower() in t: seo += 5
     seo = min(15, seo)
 
-    # 5. Word count adequacy (15) — not too short, not padded
+    # 5. Word count (15)
     words = len(content.split())
     if 800 <= words <= 1200: wc = 15
     elif 700 <= words < 800 or 1200 < words <= 1400: wc = 10
@@ -448,19 +498,16 @@ def score_report(content: str, state_name: str) -> dict:
     total = sp + hv + ac + seo + wc
     return {
         "total": total,
-        "specificity": sp,
-        "human_voice": hv,
-        "actionability": ac,
-        "seo_signals": seo,
-        "word_count_score": wc,
-        "word_count": words,
+        "specificity": sp, "human_voice": hv,
+        "actionability": ac, "seo_signals": seo,
+        "word_count_score": wc, "word_count": words,
         "passes": total >= 70,
     }
 
 
 def generate_with_quality_check(prompt: str, state_name: str,
                                   max_attempts: int = 3,
-                                  threshold: int = 70) -> tuple[str, dict]:
+                                  threshold: int = 70) -> tuple:
     """Generate content, score it, regenerate if below threshold."""
     best_content = ""
     best_score: dict = {"total": 0}
@@ -484,18 +531,26 @@ def generate_with_quality_check(prompt: str, state_name: str,
             print(f"  ⚠️  Score {score['total']} < {threshold} — regenerating...")
 
     if not best_score["passes"]:
-        print(f"  ⚠️  Best score was {best_score['total']}/100 after {max_attempts} attempts — using best version")
+        print(f"  ⚠️  Best score {best_score['total']}/100 after {max_attempts} attempts — using best version")
 
     return best_content, best_score
 
+
 def generate_report_content(liens: dict, gsc: dict,
                              state_key: str = "florida") -> dict:
-    cfg        = STATES.get(state_key, STATES["florida"])
-    state_name = cfg["name"]
-    state_url  = f"{SITE_URL}{cfg['landing']}"
+    """
+    Generate weekly report. Florida lien data is always the primary data source.
+    state_key controls the featured state context section.
+    """
+    fl_cfg     = STATES["florida"]
+    feat_cfg   = STATES.get(state_key, STATES["florida"])
+    feat_name  = feat_cfg["name"]
+    feat_url   = f"{SITE_URL}{feat_cfg['landing']}"
     week_of    = liens["week_of"]
+    data_label = "VERIFIED LIVE DATA" if liens.get("data_source") == "live" else "ESTIMATED DATA"
+
     top_county = liens["top_counties"][0] if liens["top_counties"] else {}
-    top_name   = top_county.get("county", cfg["top_counties"][0])
+    top_name   = top_county.get("county", fl_cfg["top_counties"][0])
     top_count  = top_county.get("count", 0)
 
     county_lines = "\n".join(
@@ -503,7 +558,7 @@ def generate_report_content(liens: dict, gsc: dict,
         f"({'↑' if c['count'] >= c['last_week'] else '↓'} "
         f"from {c['last_week']} last week)"
         for c in liens["top_counties"]
-    )
+    ) or "- County breakdown unavailable this week"
 
     opp_lines = "\n".join(
         f"- '{o['query']}': {o['impressions']} impressions, "
@@ -516,41 +571,56 @@ def generate_report_content(liens: dict, gsc: dict,
         for p in gsc["rising_pages"][:3]
     ) or "- Building impressions across county pages"
 
+    # Featured state context block
+    feat_industries = ", ".join(feat_cfg["key_industries"])
+    feat_counties   = ", ".join(feat_cfg["top_counties"][:4])
+    if feat_cfg.get("has_db_data") and state_key != "florida":
+        feat_data_note = f"We also track live lien data for {feat_name} — use this context section to highlight {feat_name}-specific patterns."
+    else:
+        feat_data_note = f"Use national IRS enforcement trends for {feat_name}. Label any estimates clearly."
+
     prompt = f"""You are a former IRS Revenue Officer writing a weekly intelligence briefing for TaxCase Review.
-Your reader is a contractor, small business owner, or self-employed professional in Florida who may have received an IRS notice or seen their name on a public lien.
+Your primary reader is a contractor, small business owner, or self-employed professional who may have received an IRS notice.
 Write like a trusted insider — calm, specific, useful. Not like a legal disclaimer.
 
-VERIFIED DATA THIS WEEK:
+{data_label} — FLORIDA LIEN DATABASE (primary):
 - Total IRS federal tax liens in our Florida database: {liens['total_liens']:,}
 - New liens filed this week: {liens['new_this_week']}
 - New liens last week: {liens['new_last_week']}
 - Week-over-week change: {'+' if liens['pct_change'] >= 0 else ''}{liens['pct_change']}%
 - Highest-activity county: {top_name} County — {top_count} new liens this week
 
-County breakdown:
+County breakdown (Florida):
 {county_lines}
 
 Fastest growing counties (week over week):
-{chr(10).join(f"- {c['county']}: +{c['pct']}% vs last week" for c in liens['high_growth_counties'])}
+{chr(10).join(f"- {c['county']}: +{c['pct']}% vs last week" for c in liens['high_growth_counties']) or "- Calculating..."}
 
-Search visibility (real data from Google Search Console):
+Search visibility (Google Search Console — real data):
 - 28-day impressions: {gsc['total_impressions_28d']}
 - 28-day clicks: {gsc['total_clicks_28d']}
 - This week's impressions: {gsc['total_impressions_7d']}
 
-Searches with impressions but zero clicks (what people are looking for that we're not answering yet):
+Searches with impressions but zero clicks:
 {opp_lines}
+
+FEATURED STATE THIS WEEK: {feat_name}
+Key industries: {feat_industries}
+Major counties: {feat_counties}
+Common notices: {feat_cfg['notice_focus']}
+State page: {feat_url}
+{feat_data_note}
 
 Write in this EXACT markdown format — return ONLY the markdown, no preamble:
 
 ---
-title: "Florida IRS Tax Lien Report — Week of {week_of}"
+title: "IRS Tax Lien Report — Week of {week_of} | Florida & {feat_name}"
 date: "{date.today().isoformat()}"
-slug: "weekly-report-{date.today().isoformat()}"
+slug: "weekly-report-{state_key.replace('_','-')}-{date.today().isoformat()}"
 type: "weekly-report"
-state: "florida"
+state: "{state_key}"
 week_of: "{week_of}"
-metaDescription: "{liens['new_this_week']} new IRS liens filed in Florida this week. {top_name} County leads. See what's happening and what your options are."
+metaDescription: "{liens['new_this_week']} new IRS liens filed in Florida this week. Plus: what's happening in {feat_name}. See what it means and what your options are."
 ---
 
 # {liens['new_this_week']} New IRS Liens Filed in Florida This Week
@@ -559,47 +629,52 @@ metaDescription: "{liens['new_this_week']} new IRS liens filed in Florida this w
 
 ## What Happened This Week
 
-[2-3 sentences. Lead with the number that matters — {liens['new_this_week']} new liens. Name the trend. Mention {top_name} County specifically. Write like you're briefing a colleague, not filing a report. Example tone: "The IRS filed {liens['new_this_week']} federal tax liens across Florida this week — {'up' if liens['pct_change'] >= 0 else 'down'} {abs(liens['pct_change'])}% from last week. {top_name} County saw the highest activity with {top_count} new filings."]
+[2-3 sentences. Lead with the number that matters — {liens['new_this_week']} new liens. Name the trend. Mention {top_name} County specifically. Write like you're briefing a colleague, not filing a report.]
 
 ## The County Where It Was Worst: {top_name}
 
-[100-150 words. Who lives in {top_name}? What industries are dominant there? Why does the IRS target this county heavily? Make it specific and useful — if someone in {top_name} is reading this, they should feel like this was written for them. Mention real things about the county economy. End with one concrete action they can take.]
+[100-150 words. Who lives in {top_name}? What industries are dominant there? Why does the IRS target this county heavily? Make it specific and useful — if someone in {top_name} is reading this, they should feel like this was written for them. End with one concrete action they can take.]
 
 ## The Full County Breakdown
 
-[List all counties from the data with trend arrows (↑↓). After the list, 2-3 sentences about what the pattern means — are liens concentrated in growth areas? Tourist counties? Construction corridors?]
+[List all counties from the data with trend arrows (↑↓). After the list, 2-3 sentences about what the pattern means.]
 
 ## The Part Nobody Mentions
 
-[150 words. Pick ONE insight from the data that most people miss. Examples: "A lien filed this week doesn't mean the IRS is about to seize your bank account — here's the actual sequence." Or: "The spike in {top_name} County correlates with Q1 estimated tax deadlines — here's why contractors get hit hardest." Be specific. Be useful. Teach something.]
+[150 words. Pick ONE insight from the data that most people miss. Be specific. Teach something real about IRS collection mechanics.]
+
+## What's Happening in {feat_name} This Week
+
+[120 words. {feat_data_note} Cover who in {feat_name} is most at risk — industries ({feat_industries}), counties ({feat_counties}), and the most common notices ({feat_cfg['notice_focus']}). If you have DB data for this state, cite it. If not, use directional language: "Based on national IRS enforcement patterns..." Link to {feat_url}.]
 
 ## Your Options If You're in This Data
 
-[120 words. Plain language. Not a list of disclaimers. Write as if talking to a specific person: "If your name is in this week's filings, here's what matters right now..." Cover the 2-3 most relevant resolution paths for the taxpayer types most common in this data. End with a direct CTA — not "contact us" but something specific like "The first step is a 60-second quiz that tells you which path applies to your situation."]
+[120 words. Plain language. Write as if talking to a specific person. Cover the 2-3 most relevant resolution paths. End with a direct CTA to {SITE_URL}/quiz.]
 
 📞 {PHONE}
 🌐 [{SITE_URL}/florida]({SITE_URL}/florida) | [Start free assessment]({SITE_URL}/quiz)
 
-*Public lien data compiled weekly. Individual circumstances vary. This is not legal or tax advice.*
+*Public lien data compiled weekly from county public records. Individual circumstances vary. This is not legal or tax advice.*
 
 ---
 
 RULES:
 - 800-1000 words total
 - Write like a knowledgeable human, not a compliance document
-- Use the data provided — no invented statistics
+- Use the data provided — never invent statistics
+- Label any non-DB data as estimated or based on national trends
 - Every section should make the reader feel like the author understands their situation
 - No guaranteed outcomes, no legal claims
 - Return ONLY the markdown"""
 
-    report_md, quality = generate_with_quality_check(prompt, state_name, max_attempts=3)
+    report_md, quality = generate_with_quality_check(prompt, "Florida", max_attempts=3)
 
     # Social snippets
     social_raw = call_claude(f"""You are writing social posts for TaxCase Review from real public lien data.
 Your audience: Florida contractors, self-employed workers, small business owners who may have IRS problems.
-Write like a person who has worked inside the IRS and wants to genuinely help — not like a law firm.
+Write like a person who has worked inside the IRS and wants to genuinely help.
 
-DATA THIS WEEK:
+DATA THIS WEEK ({data_label}):
 - {liens['new_this_week']} new IRS federal tax liens filed in Florida
 - {top_name} County: {top_count} new liens (highest this week)
 - Week change: {'+' if liens['pct_change'] >= 0 else ''}{liens['pct_change']}% vs last week
@@ -608,13 +683,13 @@ DATA THIS WEEK:
 FORMAT EXACTLY — return ONLY these three posts:
 
 FACEBOOK:
-[160-200 words. Open with a specific, uncomfortable truth or number from the data — not "Did you know?" Lead with what happened, not what TaxCase Review does. Example opener: "{liens['new_this_week']} Florida business owners had an IRS tax lien filed against them this week." Then explain what a lien means in plain terms — public record, credit impact, property attachment. Name {top_name} County specifically. End with: "Comment LIEN if you've found one on your public record." Include: {SITE_URL}/florida | {PHONE} | 4-5 hashtags: #IRSTaxLien #Florida #{top_name.replace('-','')}County #TaxDebt #Contractors]
+[160-200 words. Open with the specific number from the data — not "Did you know?" Lead with what happened. Name {top_name} County specifically. End with: "Comment LIEN if you've found one on your public record." Include: {SITE_URL}/florida | {PHONE} | 4-5 hashtags]
 
 LINKEDIN:
-[120-150 words. Open with data point. Speak to business owners and contractors specifically. Cover the business implications — lien attaches to business assets, can block financing, affects vendor relationships. One concrete insight most people don't know. End with a question that invites comments. 3 hashtags: #IRSTaxLien #FloridaBusiness #TaxResolution]
+[120-150 words. Open with data point. Speak to business owners specifically. Cover business implications. End with a question that invites comments. 3 hashtags: #IRSTaxLien #FloridaBusiness #TaxResolution]
 
 TWITTER/X:
-[Under 280 chars. Specific number + location + what it means + link. Example: "{liens['new_this_week']} IRS liens filed in Florida this week. {top_name} County had the most. A lien is public record — anyone can see it. Here's what to do: {SITE_URL}/florida"]
+[Under 280 chars. Specific number + location + what it means + link.]
 
 Return ONLY the three posts in the format above.""", max_tokens=1200)
 
@@ -653,6 +728,7 @@ def parse_social(raw: str) -> dict:
         "source":    "weekly_intelligence",
     }
 
+
 def parse_newsletter(raw: str) -> dict:
     def extract(text, field):
         pattern = rf"{field}:\s*(.+?)(?=\n[A-Z]+:|$)"
@@ -670,12 +746,10 @@ def parse_newsletter(raw: str) -> dict:
 
 # ── GitHub publisher ──────────────────────────────────────────────────────────
 
-INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"  # same key as social_media_poster.py / reel_generator.py
+INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"
 
 
 def index_url(url: str):
-    """Submit a freshly published report URL to IndexNow (Bing/Yandex). Same
-    key/host as the rest of the codebase. Non-blocking."""
     try:
         payload = {
             "host":        "taxcasereview.org",
@@ -693,10 +767,6 @@ def index_url(url: str):
 
 
 def submit_sitemap(sitemap_url: str = None):
-    """Nudge Google to re-fetch the sitemap via the GSC Sitemaps API after a
-    publish. IndexNow covers Bing/Yandex; this is the Google lever. Requires a
-    GSC token with the webmasters (write) scope — mint one with
-    scripts/archive/gen_gsc_token.py. Non-blocking."""
     sitemap_url = sitemap_url or f"{SITE_URL}/sitemap.xml"
     try:
         from google.oauth2.credentials import Credentials
@@ -714,8 +784,7 @@ def submit_sitemap(sitemap_url: str = None):
         print(f"  GSC sitemap submit failed (non-blocking): {e}")
 
 
-def publish_to_github(filename: str, content: str,
-                      commit_msg: str) -> bool:
+def publish_to_github(filename: str, content: str, commit_msg: str) -> bool:
     if not GITHUB_TOKEN:
         print("  ⚠  GITHUB_TOKEN not set")
         return False
@@ -760,7 +829,7 @@ def main():
     parser.add_argument("--no-gsc",     action="store_true")
     parser.add_argument("--state",      default=None,
                         choices=list(STATES.keys()),
-                        help="Override state (default: auto-rotate)")
+                        help="Override featured state (default: auto-rotate)")
     args = parser.parse_args()
 
     dry_run = args.dry_run or args.no_publish
@@ -790,7 +859,7 @@ def main():
           f"{liens['top_counties'][0]['county'] if liens['top_counties'] else '—'}")
     if logger:
         logger.step_done("pull_lien_data", ok=True,
-                         detail=f"{liens['new_this_week']} new liens")
+                         detail=f"{liens['new_this_week']} new liens ({liens.get('data_source','?')})")
 
     # ── GSC data ──────────────────────────────────────────────────────────────
     if logger: logger.step_start("pull_gsc_data")
@@ -816,16 +885,18 @@ def main():
     gsc_file = DATA_OPS / f"gsc_weekly_{date.today().isoformat()}.json"
     gsc_file.write_text(json.dumps(gsc, indent=2))
 
-    # ── Generate ──────────────────────────────────────────────────────────────
-    # Determine which state to report on this week
+    # ── Determine featured state ───────────────────────────────────────────────
     if args.state:
         state_key = args.state
     else:
         week_num  = date.today().isocalendar()[1]
         state_key = WEEKLY_STATE_ROTATION[week_num % len(WEEKLY_STATE_ROTATION)]
     cfg = STATES[state_key]
-    print(f"\nState: {cfg['name']} ({cfg['abbr']}) — {'from DB' if cfg['has_db_data'] else 'from trends'}")
+    print(f"\nFeatured state: {cfg['name']} ({cfg['abbr']}) — "
+          f"{'from DB' if cfg['has_db_data'] else 'from national trends'}")
+    print(f"Florida lien data: {liens.get('data_source', '?').upper()}")
 
+    # ── Generate ──────────────────────────────────────────────────────────────
     if logger: logger.step_start("generate_report")
     print("\nGenerating report with Claude...")
     content = generate_report_content(liens, gsc, state_key=state_key)
@@ -842,7 +913,6 @@ def main():
     social     = parse_social(content["social_raw"])
     newsletter = parse_newsletter(content["newsletter_raw"])
 
-    # Append to social queue
     sq_file = DATA_OPS / "social_queue.json"
     sq = []
     if sq_file.exists():
@@ -851,7 +921,6 @@ def main():
     sq.append(social)
     sq_file.write_text(json.dumps(sq[-20:], indent=2))
 
-    # Append to newsletter queue
     nq_file = DATA_OPS / "newsletter_queue.json"
     nq = []
     if nq_file.exists():
@@ -864,30 +933,26 @@ def main():
     print(f"  Social queue: {len(sq)} posts")
     print(f"  Newsletter queue: {len(nq)} items")
 
-    # ── Press release: if this week's data is newsworthy, draft a release and
-    # email it to Romy for review. Auto-submission to PR services stays OFF
-    # (gated by PR_SUBMIT_ENABLED) until the output is reviewed. Non-blocking.
+    # ── Press release check ───────────────────────────────────────────────────
     try:
         from scripts.outreach.press_release_generator import maybe_generate_from_report
         pr_logger = None
         try:
             from pipeline_log import PipelineLogger as _PRLogger
-            pr_logger = _PRLogger("press_release")
-            pr_logger.start()
+            pr_logger = _PRLogger("press_release"); pr_logger.start()
         except Exception:
-            pr_logger = None
+            pass
         print("\n  Press release check...")
         maybe_generate_from_report(
             report_path=report_file,
             logger=pr_logger,
-            email_review=not dry_run,   # email Romy on live runs only
-            submit=False,               # auto-submit disabled pending review
+            email_review=not dry_run,
+            submit=False,
         )
     except Exception as e:
         print(f"  Press release step skipped (non-blocking): {e}")
 
-    # ── Broken-link prospecting (Sundays only): find dead links on competitor/
-    # resource pages where TaxCase Review content is a replacement. Non-blocking.
+    # ── Broken-link prospecting (Sundays only) ────────────────────────────────
     try:
         if date.today().weekday() == 6 and not dry_run:
             from scripts.outreach.broken_link_finder import run as _bl_run
@@ -896,7 +961,7 @@ def main():
                 from pipeline_log import PipelineLogger as _BLLogger
                 bl_logger = _BLLogger("broken_links"); bl_logger.start()
             except Exception:
-                bl_logger = None
+                pass
             print("\n  Broken-link scan (Sunday)...")
             _bl_run(limit=10, do_draft=True, logger=bl_logger)
     except Exception as e:
@@ -928,7 +993,9 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"  Weekly Intelligence Complete")
+    print(f"  Data source    : {liens.get('data_source','?').upper()}")
     print(f"  New liens      : {liens['new_this_week']}")
+    print(f"  Featured state : {cfg['name']}")
     print(f"  Impressions 28d: {gsc['total_impressions_28d']}")
     print(f"  Impressions 7d : {gsc['total_impressions_7d']}")
     print(f"  Opportunities  : {len(gsc['opportunities'])}")
@@ -938,6 +1005,8 @@ def main():
         logger.finish({
             "new_liens_this_week":     liens["new_this_week"],
             "total_liens":             liens["total_liens"],
+            "data_source":             liens.get("data_source", "?"),
+            "featured_state":          state_key,
             "gsc_impressions_28d":     gsc["total_impressions_28d"],
             "gsc_impressions_7d":      gsc["total_impressions_7d"],
             "gsc_opportunities":       len(gsc["opportunities"]),

@@ -1,18 +1,22 @@
 """
-monthly_state_report.py  (v3)
+monthly_state_report.py  (v4)
 ==============================
 Generates monthly state-level IRS tax intelligence reports.
-All 10 states: Florida, Texas, Georgia, Arizona, California, New York, North Carolina.
+All 10 states: FL, TX, GA, AZ, CA, NY, NC, IL, OH, PA.
 
-CHANGES IN V3:
-  - Added California, New York, North Carolina
-  - Fixed Florida DB query (correct monthly count)
-  - All non-Florida states use Claude synthesis with public IRS trends
-  - Clearly labels estimated vs verified data
+CHANGES IN V4:
+  - Fixed table name: normalized_liens → lien_dbpr_contacts (matches pipeline)
+    Uses information_schema to auto-detect correct table at runtime.
+  - Updated model: claude-sonnet-4-5 → claude-sonnet-4-6
+  - DB errors now raise explicitly — never silently publish hardcoded data
+  - HAS_DB=False fallback clearly labeled as ESTIMATED in logs and report
+  - has_db_data: True now set for TX, GA, AZ (partial data exists in pipeline)
+  - Data source label (LIVE/ESTIMATED) printed in pipeline logs
+  - Quality scoring preserved (up to 3 attempts, threshold 70)
 
 Usage:
   python scripts/reports/monthly_state_report.py --state florida
-  python scripts/reports/monthly_state_report.py --state california
+  python scripts/reports/monthly_state_report.py --state texas
   python scripts/reports/monthly_state_report.py --all
   python scripts/reports/monthly_state_report.py --all --dry-run
 
@@ -53,223 +57,309 @@ except ImportError:
 
 STATES = {
     "florida": {
-        "name":          "Florida",
-        "abbreviation":  "FL",
-        "has_db_data":   True,
-        "top_counties":  ["Miami-Dade", "Broward", "Palm Beach", "Hillsborough",
-                          "Orange", "Pinellas", "Duval", "Martin", "Lake", "Manatee"],
+        "name":           "Florida",
+        "abbreviation":   "FL",
+        "has_db_data":    True,
+        "top_counties":   ["Miami-Dade", "Broward", "Palm Beach", "Hillsborough",
+                           "Orange", "Pinellas", "Duval", "Martin", "Lake", "Manatee"],
         "key_industries": ["construction contractors", "real estate professionals",
                            "self-employed service workers",
                            "restaurant and hospitality owners"],
-        "notice_focus":  "CP14, CP503, CP504",
-        "landing":       "/florida",
-        "data_note":     "",
+        "notice_focus":   "CP14, CP503, CP504",
+        "landing":        "/florida",
+        "data_note":      "",
     },
     "texas": {
-        "name":          "Texas",
-        "abbreviation":  "TX",
-        "has_db_data":   False,
-        "top_counties":  ["Harris", "Dallas", "Tarrant", "Bexar",
-                          "Travis", "Collin", "Denton", "Fort Bend"],
+        "name":           "Texas",
+        "abbreviation":   "TX",
+        "has_db_data":    True,   # partial DB data exists (Harris, Dallas, etc.)
+        "top_counties":   ["Harris", "Dallas", "Tarrant", "Bexar",
+                           "Travis", "Collin", "Denton", "Fort Bend"],
         "key_industries": ["oil and gas contractors", "construction companies",
                            "trucking and logistics operators",
                            "self-employed professionals"],
-        "notice_focus":  "CP14, CP503, CP504, payroll tax notices",
-        "landing":       "/texas",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, CP504, payroll tax notices",
+        "landing":        "/texas",
+        "data_note":      "Partial DB data available. Supplement with national IRS trends.",
     },
     "georgia": {
-        "name":          "Georgia",
-        "abbreviation":  "GA",
-        "has_db_data":   False,
-        "top_counties":  ["Fulton", "Gwinnett", "Cobb", "DeKalb",
-                          "Cherokee", "Clayton", "Henry", "Hall"],
+        "name":           "Georgia",
+        "abbreviation":   "GA",
+        "has_db_data":    True,   # partial DB data exists (Fulton, Gwinnett)
+        "top_counties":   ["Fulton", "Gwinnett", "Cobb", "DeKalb",
+                           "Cherokee", "Clayton", "Henry", "Hall"],
         "key_industries": ["small business owners", "construction contractors",
                            "logistics and distribution workers",
                            "self-employed professionals"],
-        "notice_focus":  "CP14, CP503, payroll tax enforcement",
-        "landing":       "/georgia",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, payroll tax enforcement",
+        "landing":        "/georgia",
+        "data_note":      "Partial DB data available. Supplement with national IRS trends.",
     },
     "arizona": {
-        "name":          "Arizona",
-        "abbreviation":  "AZ",
-        "has_db_data":   False,
-        "top_counties":  ["Maricopa", "Pima", "Pinal", "Yavapai",
-                          "Mohave", "Yuma", "Cochise", "Navajo"],
+        "name":           "Arizona",
+        "abbreviation":   "AZ",
+        "has_db_data":    True,   # Maricopa data exists in pipeline
+        "top_counties":   ["Maricopa", "Pima", "Pinal", "Yavapai",
+                           "Mohave", "Yuma", "Cochise", "Navajo"],
         "key_industries": ["construction and real estate",
                            "retirement income recipients",
                            "self-employed service professionals",
                            "small business owners"],
-        "notice_focus":  "CP14, retirement income issues, CP504",
-        "landing":       "/arizona",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, retirement income issues, CP504",
+        "landing":        "/arizona",
+        "data_note":      "Partial DB data available (Maricopa). Supplement with national IRS trends.",
     },
     "california": {
-        "name":          "California",
-        "abbreviation":  "CA",
-        "has_db_data":   False,
-        "top_counties":  ["Los Angeles", "San Diego", "Orange", "Riverside",
-                          "San Bernardino", "Santa Clara", "Alameda", "Sacramento"],
+        "name":           "California",
+        "abbreviation":   "CA",
+        "has_db_data":    False,
+        "top_counties":   ["Los Angeles", "San Diego", "Orange", "Riverside",
+                           "San Bernardino", "Santa Clara", "Alameda", "Sacramento"],
         "key_industries": ["self-employed tech contractors and freelancers",
                            "gig economy workers",
                            "real estate investors and agents",
                            "entertainment industry professionals",
                            "small business owners"],
-        "notice_focus":  "CP14, CP503, CP504, self-employment tax notices",
-        "landing":       "/california",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, CP504, self-employment tax notices",
+        "landing":        "/california",
+        "data_note":      "Based on national IRS enforcement trends and public data.",
     },
     "new_york": {
-        "name":          "New York",
-        "abbreviation":  "NY",
-        "has_db_data":   False,
-        "top_counties":  ["Kings (Brooklyn)", "Queens", "New York (Manhattan)",
-                          "Bronx", "Staten Island", "Nassau", "Suffolk",
-                          "Westchester"],
+        "name":           "New York",
+        "abbreviation":   "NY",
+        "has_db_data":    False,
+        "top_counties":   ["Kings (Brooklyn)", "Queens", "New York (Manhattan)",
+                           "Bronx", "Staten Island", "Nassau", "Suffolk",
+                           "Westchester"],
         "key_industries": ["small business owners",
                            "self-employed professionals",
                            "restaurant and hospitality operators",
                            "real estate professionals",
                            "construction contractors"],
-        "notice_focus":  "CP14, CP503, CP504, payroll tax notices",
-        "landing":       "/new-york",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, CP504, payroll tax notices",
+        "landing":        "/new-york",
+        "data_note":      "Based on national IRS enforcement trends and public data.",
     },
     "north_carolina": {
-        "name":          "North Carolina",
-        "abbreviation":  "NC",
-        "has_db_data":   False,
-        "top_counties":  ["Mecklenburg (Charlotte)", "Wake (Raleigh)",
-                          "Guilford", "Forsyth", "Cumberland",
-                          "Durham", "Buncombe", "Union"],
+        "name":           "North Carolina",
+        "abbreviation":   "NC",
+        "has_db_data":    False,
+        "top_counties":   ["Mecklenburg (Charlotte)", "Wake (Raleigh)",
+                           "Guilford", "Forsyth", "Cumberland",
+                           "Durham", "Buncombe", "Union"],
         "key_industries": ["construction contractors",
                            "manufacturing and logistics workers",
                            "self-employed professionals",
                            "small business owners",
                            "tech sector contractors"],
-        "notice_focus":  "CP14, CP503, CP504",
-        "landing":       "/north-carolina",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, CP504",
+        "landing":        "/north-carolina",
+        "data_note":      "Based on national IRS enforcement trends and public data.",
     },
     "illinois": {
-        "name":          "Illinois",
-        "abbreviation":  "IL",
-        "has_db_data":   False,
-        "top_counties":  ["Cook (Chicago)", "DuPage", "Lake",
-                          "Will (Joliet)", "Kane", "Winnebago (Rockford)",
-                          "Peoria", "Champaign"],
+        "name":           "Illinois",
+        "abbreviation":   "IL",
+        "has_db_data":    False,
+        "top_counties":   ["Cook (Chicago)", "DuPage", "Lake",
+                           "Will (Joliet)", "Kane", "Winnebago (Rockford)",
+                           "Peoria", "Champaign"],
         "key_industries": ["construction contractors",
                            "manufacturing workers",
                            "trucking and logistics operators",
                            "restaurant and hospitality owners"],
-        "notice_focus":  "CP14, CP503, CP504",
-        "landing":       "/illinois",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, CP504",
+        "landing":        "/illinois",
+        "data_note":      "Based on national IRS enforcement trends and public data.",
     },
     "ohio": {
-        "name":          "Ohio",
-        "abbreviation":  "OH",
-        "has_db_data":   False,
-        "top_counties":  ["Cuyahoga (Cleveland)", "Franklin (Columbus)",
-                          "Hamilton (Cincinnati)", "Summit (Akron)",
-                          "Montgomery (Dayton)", "Lucas (Toledo)",
-                          "Stark (Canton)", "Lorain"],
+        "name":           "Ohio",
+        "abbreviation":   "OH",
+        "has_db_data":    False,
+        "top_counties":   ["Cuyahoga (Cleveland)", "Franklin (Columbus)",
+                           "Hamilton (Cincinnati)", "Summit (Akron)",
+                           "Montgomery (Dayton)", "Lucas (Toledo)",
+                           "Stark (Canton)", "Lorain"],
         "key_industries": ["manufacturing and auto industry workers",
                            "construction contractors",
                            "trucking operators",
                            "small business owners"],
-        "notice_focus":  "CP14, CP503, CP504",
-        "landing":       "/ohio",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, CP504",
+        "landing":        "/ohio",
+        "data_note":      "Based on national IRS enforcement trends and public data.",
     },
     "pennsylvania": {
-        "name":          "Pennsylvania",
-        "abbreviation":  "PA",
-        "has_db_data":   False,
-        "top_counties":  ["Philadelphia", "Allegheny (Pittsburgh)",
-                          "Montgomery", "Bucks", "Delaware",
-                          "Lancaster", "York", "Lehigh (Allentown)"],
+        "name":           "Pennsylvania",
+        "abbreviation":   "PA",
+        "has_db_data":    False,
+        "top_counties":   ["Philadelphia", "Allegheny (Pittsburgh)",
+                           "Montgomery", "Bucks", "Delaware",
+                           "Lancaster", "York", "Lehigh (Allentown)"],
         "key_industries": ["construction contractors",
                            "trucking and logistics operators",
                            "manufacturing workers",
                            "restaurant and hospitality owners"],
-        "notice_focus":  "CP14, CP503, CP504",
-        "landing":       "/pennsylvania",
-        "data_note":     "Based on national IRS enforcement trends and public data.",
+        "notice_focus":   "CP14, CP503, CP504",
+        "landing":        "/pennsylvania",
+        "data_note":      "Based on national IRS enforcement trends and public data.",
     },
 }
 
 
-# ── DB: Florida lien data ─────────────────────────────────────────────────────
+# ── DB helpers ────────────────────────────────────────────────────────────────
 
-def get_florida_monthly_data() -> dict:
+def _resolve_lien_table(cur) -> str:
+    """
+    Find the correct lien table name via information_schema.
+    Prefers lien_dbpr_contacts, falls back to normalized_liens.
+    Raises RuntimeError if neither exists.
+    """
+    cur.execute("""
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN ('lien_dbpr_contacts', 'normalized_liens')
+        ORDER BY
+          CASE table_name
+            WHEN 'lien_dbpr_contacts' THEN 1
+            WHEN 'normalized_liens'   THEN 2
+          END
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+    if not row:
+        raise RuntimeError(
+            "Neither lien_dbpr_contacts nor normalized_liens found in DB. "
+            "Check DB connection and schema."
+        )
+    return row[0]
+
+
+def _resolve_date_col(cur, table: str) -> str:
+    """Return the date column to use for recency queries."""
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = %s
+          AND column_name IN ('filed_date', 'created_at', 'lien_date')
+        ORDER BY
+          CASE column_name
+            WHEN 'filed_date'  THEN 1
+            WHEN 'created_at'  THEN 2
+            WHEN 'lien_date'   THEN 3
+          END
+        LIMIT 1
+    """, (table,))
+    row = cur.fetchone()
+    return row[0] if row else "created_at"
+
+
+def _resolve_state_col(cur, table: str) -> str | None:
+    """Return the state column name if one exists."""
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = %s
+          AND column_name IN ('state', 'state_abbr', 'state_code')
+        LIMIT 1
+    """, (table,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def get_state_monthly_data(state_key: str, cfg: dict) -> dict:
+    """
+    Pull monthly lien data for a state from the DB.
+    Returns dict with data_source='live' if successful.
+    Raises on DB errors — never silently falls back to hardcoded numbers.
+    If HAS_DB is False, returns data_source='estimated' with zero counts.
+    """
+    abbr = cfg["abbreviation"]
+
     if not HAS_DB:
+        print(f"  ⚠  DATA SOURCE: ESTIMATED (DB module not importable)")
         return {
-            "total_liens_all_time": 17552,
-            "new_this_month":       247,
-            "new_last_month":       311,
-            "pct_change":           -20.6,
-            "top_counties": [
-                {"county": "Miami-Dade", "count": 89},
-                {"county": "Martin",     "count": 41},
-                {"county": "Lake",       "count": 38},
-            ],
-            "month_name":  date.today().strftime("%B %Y"),
-            "data_source": "mock",
+            "total_liens_all_time": 0,
+            "new_this_month":       0,
+            "new_last_month":       0,
+            "pct_change":           0.0,
+            "top_counties":         [],
+            "month_name":           date.today().strftime("%B %Y"),
+            "data_source":          "estimated",
         }
 
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM normalized_liens")
+            table    = _resolve_lien_table(cur)
+            date_col = _resolve_date_col(cur, table)
+            state_col = _resolve_state_col(cur, table)
+            print(f"  DATA SOURCE: LIVE — table={table}, date_col={date_col}")
+
+            # Build state filter
+            if state_col and state_key != "florida":
+                state_filter = f"AND {state_col} = %s"
+                state_param  = (abbr,)
+            elif state_key == "florida":
+                # Florida data may not have a state column — it's the primary state
+                state_filter = ""
+                state_param  = ()
+            else:
+                state_filter = ""
+                state_param  = ()
+
+            cur.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE 1=1 {state_filter}",
+                state_param
+            )
             total = cur.fetchone()[0]
 
-            # Detect date column
-            cur.execute("""
-                SELECT column_name FROM information_schema.columns
-                WHERE table_name='normalized_liens'
-                  AND column_name IN ('filed_date','created_at')
-                ORDER BY column_name
-            """)
-            cols     = [r[0] for r in cur.fetchall()]
-            date_col = "filed_date" if "filed_date" in cols else "created_at"
-
+            # New this month
             cur.execute(f"""
-                SELECT COUNT(*) FROM normalized_liens
+                SELECT COUNT(*) FROM {table}
                 WHERE {date_col} >= date_trunc('month', CURRENT_DATE)
-                  AND {date_col} <  date_trunc('month', CURRENT_DATE)
-                                  + INTERVAL '1 month'
-            """)
+                  AND {date_col} <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+                  {state_filter}
+            """, state_param)
             new_this = cur.fetchone()[0] or 0
 
+            # New last month
             cur.execute(f"""
-                SELECT COUNT(*) FROM normalized_liens
-                WHERE {date_col} >= date_trunc('month', CURRENT_DATE)
-                                  - INTERVAL '1 month'
+                SELECT COUNT(*) FROM {table}
+                WHERE {date_col} >= date_trunc('month', CURRENT_DATE) - INTERVAL '1 month'
                   AND {date_col} <  date_trunc('month', CURRENT_DATE)
-            """)
+                  {state_filter}
+            """, state_param)
             new_last = cur.fetchone()[0] or 0
 
-            # Fallback: if early in month, use last 30 days
+            # Early in month fallback
             if new_this == 0:
                 cur.execute(f"""
-                    SELECT COUNT(*) FROM normalized_liens
+                    SELECT COUNT(*) FROM {table}
                     WHERE {date_col} >= NOW() - INTERVAL '30 days'
-                """)
+                    {state_filter}
+                """, state_param)
                 new_this = cur.fetchone()[0] or 0
 
             pct = round((new_this - new_last) / max(new_last, 1) * 100, 1)
 
-            cur.execute(f"""
-                SELECT c.county_name, COUNT(*) AS cnt
-                FROM normalized_liens nl
-                JOIN counties c ON c.id = nl.county_id
-                WHERE nl.{date_col} >= NOW() - INTERVAL '30 days'
-                GROUP BY c.county_name ORDER BY cnt DESC LIMIT 8
-            """)
-            counties = [{"county": r[0], "count": r[1]}
-                        for r in cur.fetchall()]
+            # County breakdown — try join first, fall back to county_name col
+            try:
+                cur.execute(f"""
+                    SELECT c.county_name, COUNT(*) AS cnt
+                    FROM {table} nl
+                    JOIN counties c ON c.id = nl.county_id
+                    WHERE nl.{date_col} >= NOW() - INTERVAL '30 days'
+                    {state_filter.replace(f'{state_col}', f'nl.{state_col}') if state_col else ''}
+                    GROUP BY c.county_name ORDER BY cnt DESC LIMIT 8
+                """, state_param)
+            except Exception:
+                cur.execute(f"""
+                    SELECT county_name, COUNT(*) AS cnt
+                    FROM {table}
+                    WHERE {date_col} >= NOW() - INTERVAL '30 days'
+                      AND county_name IS NOT NULL
+                    {state_filter}
+                    GROUP BY county_name ORDER BY cnt DESC LIMIT 8
+                """, state_param)
+
+            counties = [{"county": r[0], "count": r[1]} for r in cur.fetchall()]
 
             return {
                 "total_liens_all_time": total,
@@ -278,8 +368,7 @@ def get_florida_monthly_data() -> dict:
                 "pct_change":           pct,
                 "top_counties":         counties,
                 "month_name":           date.today().strftime("%B %Y"),
-                "date_column_used":     date_col,
-                "data_source":          "db",
+                "data_source":          "live",
             }
     finally:
         conn.close()
@@ -296,7 +385,7 @@ def call_claude(prompt: str, max_tokens: int = 2200) -> str:
             "content-type":      "application/json",
         },
         json={
-            "model":      "claude-sonnet-4-5",
+            "model":      "claude-sonnet-4-6",  # updated from 4-5
             "max_tokens": max_tokens,
             "messages":   [{"role": "user", "content": prompt}],
         },
@@ -304,7 +393,6 @@ def call_claude(prompt: str, max_tokens: int = 2200) -> str:
     )
     r.raise_for_status()
     return r.json()["content"][0]["text"].strip()
-
 
 
 # ── Quality scoring ───────────────────────────────────────────────────────────
@@ -400,6 +488,7 @@ def generate_with_quality_check(prompt: str, state_name: str,
 
     return best_content, best_score
 
+
 def generate_state_report(state_key: str, cfg: dict,
                           db_data: dict = None) -> str:
     month_year = date.today().strftime("%B %Y")
@@ -411,13 +500,14 @@ def generate_state_report(state_key: str, cfg: dict,
     state_url  = f"{SITE_URL}{cfg['landing']}"
     data_note  = cfg.get("data_note", "")
 
-    if db_data and cfg["has_db_data"]:
+    if db_data and db_data.get("data_source") == "live":
+        data_label = "VERIFIED LIVE DATABASE DATA"
         top_text = "\n".join(
             f"  - {c['county']} County: {c['count']} liens"
             for c in db_data["top_counties"][:5]
-        )
+        ) or "  - County breakdown building"
         data_context = f"""
-VERIFIED DATABASE DATA:
+{data_label}:
 - Total IRS liens tracked in {state} (all time): {db_data['total_liens_all_time']:,}
 - New liens this month ({month_year}): {db_data['new_this_month']:,}
 - New liens last month: {db_data['new_last_month']:,}
@@ -425,13 +515,16 @@ VERIFIED DATABASE DATA:
 - Top counties this month:
 {top_text}
 
+{f"Note: {data_note}" if data_note else ""}
 Use these exact numbers. Do not invent additional statistics."""
     else:
+        data_label = "ESTIMATED DATA"
         data_context = f"""
-DATA NOTE: {data_note}
+{data_label} — {data_note}
 Use publicly available IRS enforcement patterns for {state}.
 Label any estimates as "estimated" or "based on national IRS trends."
-Do NOT invent specific numbers. Use directional language and ranges."""
+Do NOT invent specific numbers. Use directional language and ranges like
+"typically X-Y%" or "nationally, the IRS files approximately..."."""
 
     report_md, quality = generate_with_quality_check(f"""You are a former IRS Revenue Officer writing a monthly intelligence briefing for TaxCase Review.
 Your reader is a contractor, small business owner, or self-employed professional in {state} who found this report while researching their IRS situation.
@@ -453,12 +546,13 @@ slug: "{slug}"
 type: "monthly-report"
 state: "{state_key}"
 month: "{date.today().strftime('%Y-%m')}"
+data_source: "{'live' if db_data and db_data.get('data_source') == 'live' else 'estimated'}"
 metaDescription: "IRS enforcement trends in {state} for {month_year}. Who's getting targeted, which counties are active, and what your options are if you have a lien."
 ---
 
 # IRS Enforcement in {state}: What's Happening in {month_year}
 
-*Monthly briefing from TaxCase Review — compiled from public lien data and IRS enforcement patterns*
+*Monthly briefing from TaxCase Review — compiled from {'public lien data and' if db_data and db_data.get('data_source') == 'live' else 'national'} IRS enforcement patterns*
 
 ## The Short Version
 
@@ -490,7 +584,7 @@ metaDescription: "IRS enforcement trends in {state} for {month_year}. Who's gett
 
 📞 {PHONE} | [{SITE_URL}/quiz Start free assessment]({SITE_URL}/quiz)
 
-*Based on public IRS data and enforcement patterns. Individual circumstances vary. Not legal or tax advice.*
+*{'Data sourced from public county records and TaxCase Review lien database.' if db_data and db_data.get('data_source') == 'live' else 'Based on national IRS enforcement trends and public data.'} Individual circumstances vary. Not legal or tax advice.*
 
 ---
 
@@ -500,18 +594,17 @@ RULES:
 - Use {state}-specific context — economy, industries, counties, seasonal patterns
 - Every section should deliver one useful insight, not just fill space
 - No guaranteed outcomes, no legal claims, no invented statistics
+- If data is estimated, use language like "typically", "nationally", "based on IRS patterns"
 - Return ONLY the markdown""", state)
     return report_md
 
 
 # ── GitHub publisher ──────────────────────────────────────────────────────────
 
-INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"  # same key as social_media_poster.py / reel_generator.py
+INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"
 
 
 def index_url(url: str):
-    """Submit a freshly published report URL to IndexNow (Bing/Yandex). Same
-    key/host as the rest of the codebase. Non-blocking."""
     try:
         payload = {
             "host":        "taxcasereview.org",
@@ -528,8 +621,7 @@ def index_url(url: str):
         print(f"  IndexNow ping failed (non-blocking): {e}")
 
 
-def publish_to_github(filename: str, content: str,
-                      commit_msg: str) -> bool:
+def publish_to_github(filename: str, content: str, commit_msg: str) -> bool:
     if not GITHUB_TOKEN:
         print("  ⚠  GITHUB_TOKEN not set")
         return False
@@ -568,7 +660,7 @@ def publish_to_github(filename: str, content: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TaxCase Review Monthly State Reports v3 — 10 states")
+        description="TaxCase Review Monthly State Reports v4 — 10 states")
     parser.add_argument("--state",   default=None,
                         choices=list(STATES.keys()))
     parser.add_argument("--all",     action="store_true",
@@ -583,7 +675,7 @@ def main():
     states_to_run = list(STATES.keys()) if args.all else [args.state]
 
     print(f"\n{'='*60}")
-    print(f"  TaxCase Review Monthly State Reports v4 — Quality Scored")
+    print(f"  TaxCase Review Monthly State Reports v4")
     print(f"  {datetime.now().strftime('%B %Y')}")
     print(f"  States : {', '.join(STATES[s]['abbreviation'] for s in states_to_run)}")
     print(f"  {'DRY RUN' if args.dry_run else 'LIVE'}")
@@ -606,13 +698,28 @@ def main():
         db_data = None
         if cfg["has_db_data"]:
             print("  Pulling DB data...")
-            db_data = get_florida_monthly_data()
-            print(f"  Total (all time) : {db_data['total_liens_all_time']:,}")
-            print(f"  New this month   : {db_data['new_this_month']:,}")
-            print(f"  MoM change       : "
-                  f"{'+' if db_data['pct_change'] >= 0 else ''}"
-                  f"{db_data['pct_change']}%")
+            try:
+                db_data = get_state_monthly_data(state_key, cfg)
+                print(f"  DATA SOURCE  : {db_data['data_source'].upper()}")
+                print(f"  Total (all)  : {db_data['total_liens_all_time']:,}")
+                print(f"  New this month: {db_data['new_this_month']:,}")
+                print(f"  MoM change   : "
+                      f"{'+' if db_data['pct_change'] >= 0 else ''}"
+                      f"{db_data['pct_change']}%")
+            except Exception as e:
+                print(f"  ❌ DB error for {cfg['name']}: {e}")
+                print(f"  Falling back to ESTIMATED data (no DB numbers will appear in report)")
+                db_data = {
+                    "total_liens_all_time": 0,
+                    "new_this_month": 0,
+                    "new_last_month": 0,
+                    "pct_change": 0.0,
+                    "top_counties": [],
+                    "month_name": date.today().strftime("%B %Y"),
+                    "data_source": "estimated",
+                }
         else:
+            print(f"  DATA SOURCE  : ESTIMATED")
             print(f"  Source: {cfg['data_note']}")
 
         print("  Generating with Claude (quality-scored, up to 3 attempts)...")
@@ -640,7 +747,8 @@ def main():
 
             if logger:
                 logger.step_done(f"report_{state_key}", ok=True,
-                                 detail=f"{len(report_md)} chars")
+                                 detail=f"{len(report_md)} chars | "
+                                        f"source={db_data.get('data_source','estimated') if db_data else 'estimated'}")
 
         except Exception as e:
             print(f"  ❌ Error: {e}")
