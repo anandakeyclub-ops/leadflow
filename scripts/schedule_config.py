@@ -32,6 +32,7 @@ SCHEDULE = {
     "lead_scoring":       ["mon", "tue", "wed", "thu", "fri", "sat"],
     "collection_pages":   ["mon", "tue", "wed", "thu", "fri", "sat"],
     "email_enrichment":   ["mon", "tue", "wed", "thu", "fri", "sat"],
+    "free_email_enrichment": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
     "daily_summary":      ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
     "weekly_intel":       ["sun"],
     "county_lien_intel":  ["sun"],
