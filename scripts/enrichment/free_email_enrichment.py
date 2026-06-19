@@ -2,37 +2,42 @@
 """
 free_email_enrichment.py
 ========================
-Multi-source FREE email enrichment for unmatched liens across TX / AZ / GA.
-Runs daily (Task Scheduler, 6:00 AM) before the 8:00 AM email sends so fresh
-leads are ready.
+Multi-source email enrichment for unmatched liens across TX / AZ / GA.
+Runs daily (Task Scheduler, 6:00 AM) before the email sends so fresh leads are
+ready.
 
-Patterns reused from scripts/enrichment/multi_state_email_enrichment.py
-(Google CSE call, junk-email filtering, registrable-domain matching) and
-app/workers/enrich_liens_from_web.py (requests session, BeautifulSoup contact
-page scraping).
+Patterns reused from app/workers/enrich_liens_from_web.py (requests session,
+BeautifulSoup contact-page scraping) and scripts/enrichment/
+multi_state_email_enrichment.py (ValueSerp call, junk-email filtering,
+registrable-domain matching, daily quota counters).
 
-Sources, in priority order (cheapest/most-permanent first):
-  1. Google Custom Search API   — 100 free/day, permanent. Primary.
-  2. SerpAPI Google Maps        — only when CSE yields no email (conserve credits).
-  3. BBB scraper                — free, company-name leads only.
-  4. Website contact scraper    — triggered whenever 1-3 return a website URL.
+Sources, processed per lien in this order:
+  1. SAM.gov registry  — match against a local bulk CSV
+                          (data/raw/sam_gov_entities.csv) if present (free).
+  2. BBB scraper        — company-name leads only. Rotating UAs, 2s delay (free).
+  3. SerpAPI            — Google Maps for the official website (fast), Google
+                          organic as fallback. Capped at 33 calls/day.
+  4. ValueSerp          — PAYG ($2.50/1k) organic search, capped at 130/day.
+  5. Website scraper    — fired whenever a source returns a website URL; tries
+                          /, /contact, /about, /contact-us (free).
 
-On a found email, inserts into lien_dbpr_contacts (dbpr_score=55 — below the
-DBPR/TDLR match band, reflecting lower confidence). confidence is 'medium' when
-the email domain matches the business name, else 'low'. A `source` column records
-which source produced it.
+dbpr_score by source : SAM=70, SerpAPI=60, ValueSerp=60, BBB=55, website=50.
+confidence           : 'medium' if the email domain matches the business name,
+                       else 'low'.
+A `source` column records 'sam_gov', 'bbb', 'serpapi', 'valueserp', or 'website'.
 
 Usage:
   python scripts/enrichment/free_email_enrichment.py
   python scripts/enrichment/free_email_enrichment.py --dry-run
   python scripts/enrichment/free_email_enrichment.py --state AZ
-  python scripts/enrichment/free_email_enrichment.py --limit 30
-  python scripts/enrichment/free_email_enrichment.py --source google
+  python scripts/enrichment/free_email_enrichment.py --limit 50
+  python scripts/enrichment/free_email_enrichment.py --source bbb
   python scripts/enrichment/free_email_enrichment.py --reset-quota
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -60,21 +65,27 @@ for _stream in (sys.stdout, sys.stderr):
 from app.core.db import get_connection  # noqa: E402
 
 # ── Config ──────────────────────────────────────────────────────────────────────
-GOOGLE_API_KEY = os.getenv("GOOGLE_SEARCH_API_KEY", "")
-GOOGLE_CSE_ID  = os.getenv("GOOGLE_CSE_ID", "")
+VALUESERP_KEY  = os.getenv("VALUESERP_KEY", "")
+VALUESERP_CAP  = 130          # daily call cap (PAYG cost control)
 SERPAPI_KEY    = os.getenv("SERPAPI_KEY", "")
+SERPAPI_CAP    = 33           # daily call cap (1,000/mo ÷ 30)
 
-GCS_DAILY_LIMIT = 100
-DEFAULT_STATES  = ["TX", "AZ", "GA"]
-DBPR_SCORE      = 55          # below DBPR/TDLR matches — lower-confidence source
+DEFAULT_STATES = ["TX", "AZ", "GA"]
+DEFAULT_LIMIT  = 200
+SAM_CSV        = LEADFLOW_DIR / "data" / "raw" / "sam_gov_entities.csv"
 
 OPS_DIR        = LEADFLOW_DIR / "data" / "ops"
 OPS_DIR.mkdir(parents=True, exist_ok=True)
-GCS_COUNT_FILE     = OPS_DIR / "gcs_daily_count.json"
-SERPAPI_COUNT_FILE = OPS_DIR / "serpapi_daily_count.json"
+VALUESERP_COUNT_FILE = OPS_DIR / "valueserp_daily_count.json"
+SERPAPI_COUNT_FILE   = OPS_DIR / "serpapi_daily_count.json"
 
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[a-zA-Z]+")
+# dbpr_score per source — SAM is the most authoritative, website the least.
+SOURCE_SCORE = {"sam_gov": 70, "serpapi": 60, "valueserp": 60, "bbb": 55, "website": 50}
+
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}")
 PHONE_RE = re.compile(r"\(?\b\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}\b")
+
+STATE_NAMES = {"TX": "Texas", "AZ": "Arizona", "GA": "Georgia"}
 
 # Three standard browser UAs to rotate (BBB is sensitive to a static UA).
 USER_AGENTS = [
@@ -83,14 +94,17 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
 ]
 
-# Local parts / domains we never accept.
-BAD_LOCALPARTS = ("noreply", "no-reply", "donotreply", "privacy", "wordpress",
-                  "postmaster", "mailer-daemon", "abuse", "webmaster@example")
-BAD_EMAIL_DOMAINS = {
-    "example.com", "domain.com", "email.com", "youremail.com", "company.com",
-    "test.com", "sentry.io", "wix.com", "wixpress.com", "godaddy.com",
-    "squarespace.com", "wordpress.com", "sentry-next.wixpress.com",
-}
+# Names that qualify for a BBB lookup (companies, not individuals).
+BBB_COMPANY_RE = re.compile(
+    r"\b(LLC|L\.L\.C\.|INC|INCORPORATED|CO|CORP|CORPORATION|COMPANY|"
+    r"SERVICES?|CONSTRUCTION)\b", re.IGNORECASE)
+
+# Email rejects, plus basic sanity.
+BAD_EMAIL_SUBSTR = ("noreply@", "no-reply@", "@sentry", "@wix", "@wordpress",
+                    "info@example.com")
+BAD_EMAIL_DOMAINS = {"example.com", "domain.com", "email.com", "test.com",
+                     "sentry.io", "wix.com", "wixpress.com", "wordpress.com",
+                     "godaddy.com", "squarespace.com"}
 GENERIC_LOCALPARTS = {"info", "contact", "hello", "office", "sales", "admin",
                       "support", "team", "mail", "service", "billing"}
 ENTITY_WORDS = {"llc", "inc", "incorporated", "corp", "corporation", "co",
@@ -99,14 +113,12 @@ _BIZ_STOP = {"the", "and", "of", "for", "services", "service", "solutions",
              "group", "construction", "contractors", "contractor", "systems",
              "management", "enterprises", "holdings", "associates"}
 
-STATE_NAMES = {"TX": "Texas", "AZ": "Arizona", "GA": "Georgia", "FL": "Florida"}
-
 SESSION = requests.Session()
 SESSION.headers.update({"Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
                         "Accept-Language": "en-US,en;q=0.9"})
 
 
-# ── Daily quota counters (reset at midnight) ────────────────────────────────────
+# ── Daily quota counter (ValueSerp; reset at midnight) ───────────────────────────
 
 def _load_count(path: Path) -> dict:
     today = date.today().isoformat()
@@ -124,22 +136,26 @@ def _save_count(path: Path, data: dict):
     path.write_text(json.dumps(data, indent=2))
 
 
-def gcs_used() -> int:
-    return _load_count(GCS_COUNT_FILE)["used"]
+def valueserp_used() -> int:
+    return _load_count(VALUESERP_COUNT_FILE)["used"]
 
 
-def gcs_remaining() -> int:
-    return max(0, GCS_DAILY_LIMIT - gcs_used())
+def valueserp_remaining() -> int:
+    return max(0, VALUESERP_CAP - valueserp_used())
 
 
-def gcs_increment():
-    d = _load_count(GCS_COUNT_FILE)
+def valueserp_increment():
+    d = _load_count(VALUESERP_COUNT_FILE)
     d["used"] += 1
-    _save_count(GCS_COUNT_FILE, d)
+    _save_count(VALUESERP_COUNT_FILE, d)
 
 
 def serpapi_used() -> int:
     return _load_count(SERPAPI_COUNT_FILE)["used"]
+
+
+def serpapi_remaining() -> int:
+    return max(0, SERPAPI_CAP - serpapi_used())
 
 
 def serpapi_increment():
@@ -150,9 +166,9 @@ def serpapi_increment():
 
 def reset_quota():
     today = date.today().isoformat()
-    _save_count(GCS_COUNT_FILE, {"date": today, "used": 0})
+    _save_count(VALUESERP_COUNT_FILE, {"date": today, "used": 0})
     _save_count(SERPAPI_COUNT_FILE, {"date": today, "used": 0})
-    print("  Quota counters reset for", today)
+    print("  ValueSerp + SerpAPI quota counters reset for", today)
 
 
 # ── Email helpers ───────────────────────────────────────────────────────────────
@@ -169,23 +185,30 @@ def _biz_tokens(business_name: str) -> list[str]:
             if len(t) > 2 and t not in _BIZ_STOP and t not in ENTITY_WORDS]
 
 
+def email_matches_domain(email: str, site_url: str) -> bool:
+    """True when the email's registrable domain equals the website's."""
+    if not email or "@" not in email or not site_url:
+        return False
+    e = registrable_domain(email.rsplit("@", 1)[1])
+    s = registrable_domain(urlparse(site_url if "//" in site_url else "//" + site_url).netloc)
+    return bool(e and s and e == s)
+
+
 def email_matches_business(email: str, business_name: str) -> bool:
-    """True when the email's registrable domain contains a business-name token."""
     if not email or "@" not in email:
         return False
     dom = registrable_domain(email.rsplit("@", 1)[1]).replace(".", "")
-    toks = _biz_tokens(business_name)
-    return any(t in dom for t in toks)
+    return any(t in dom for t in _biz_tokens(business_name))
 
 
 def is_bad_email(email: str) -> bool:
     email = (email or "").lower().strip()
     if "@" not in email or len(email) > 100:
         return True
+    if any(b in email for b in BAD_EMAIL_SUBSTR):
+        return True
     local, _, domain = email.partition("@")
     if len(local) <= 1:
-        return True
-    if any(b in email for b in BAD_LOCALPARTS):
         return True
     if domain in BAD_EMAIL_DOMAINS:
         return True
@@ -197,9 +220,10 @@ def is_bad_email(email: str) -> bool:
     return False
 
 
-def pick_best_email(emails: list[str], business_name: str) -> str | None:
-    """Filter junk, prefer a domain that matches the business name, then a
-    non-generic local part, else the first survivor."""
+def pick_best_email(emails: list[str], business_name: str,
+                    site_url: str = "") -> str | None:
+    """Filter junk; prefer (1) domain == website domain, (2) domain matches
+    business name, (3) a non-generic local part; else first survivor."""
     clean, seen = [], set()
     for e in emails:
         e = (e or "").lower().strip()
@@ -208,16 +232,30 @@ def pick_best_email(emails: list[str], business_name: str) -> str | None:
             clean.append(e)
     if not clean:
         return None
-    matching = [e for e in clean if email_matches_business(e, business_name)]
-    pool = matching or clean
+    if site_url:
+        site_match = [e for e in clean if email_matches_domain(e, site_url)]
+        if site_match:
+            clean = site_match
+    biz_match = [e for e in clean if email_matches_business(e, business_name)]
+    pool = biz_match or clean
     non_generic = [e for e in pool if e.split("@", 1)[0] not in GENERIC_LOCALPARTS]
     return sorted(non_generic or pool)[0]
 
 
+def confidence_for(email: str, business_name: str) -> str:
+    return "medium" if email_matches_business(email, business_name) else "low"
+
+
 def is_company_name(name: str) -> bool:
-    """True when the name looks like a business (has an entity word), not a person."""
-    toks = re.split(r"[^a-z0-9]+", (name or "").lower())
-    return any(t in ENTITY_WORDS for t in toks)
+    """True when the name has a company indicator — BBB has no individual listings."""
+    return bool(BBB_COMPANY_RE.search(name or ""))
+
+
+def normalize_name(name: str) -> str:
+    n = (name or "").lower()
+    n = re.sub(r"[^a-z0-9 ]", " ", n)
+    n = " ".join(t for t in n.split() if t not in ENTITY_WORDS)
+    return re.sub(r"\s+", " ", n).strip()
 
 
 def _ua_headers(i: int) -> dict:
@@ -227,13 +265,12 @@ def _ua_headers(i: int) -> dict:
 # ── Source 4: website contact-page scraper ───────────────────────────────────────
 
 def scrape_website(url: str, business_name: str) -> tuple[str | None, str | None]:
-    """Fetch a site's home/contact/about pages and return (best_email, phone)."""
+    """Fetch a site's home/contact/about pages → (best_email, phone)."""
     if not url:
         return None, None
-    base = urlparse(url)
-    if not base.scheme:
+    if "//" not in url:
         url = "https://" + url
-        base = urlparse(url)
+    base = urlparse(url)
     root = f"{base.scheme}://{base.netloc}"
     pages = [url, urljoin(root, "/contact"), urljoin(root, "/about"),
              urljoin(root, "/contact-us")]
@@ -249,37 +286,69 @@ def scrape_website(url: str, business_name: str) -> tuple[str | None, str | None
                 m = PHONE_RE.search(r.text)
                 if m:
                     phone = m.group(0).strip()
-            if pick_best_email(emails, business_name):
+            if pick_best_email(emails, business_name, root):
                 break
         except Exception:
             continue
         time.sleep(0.3)
-    return pick_best_email(emails, business_name), phone
+    return pick_best_email(emails, business_name, root), phone
 
 
-# ── Source 1: Google Custom Search API ───────────────────────────────────────────
+# ── Source 2: BBB scraper ─────────────────────────────────────────────────────────
 
-def source_google_cse(name: str, city: str, state: str) -> dict:
-    """Returns {email, phone, website}. Spends one CSE call (caller checks quota)."""
-    out = {"email": None, "phone": None, "website": None}
-    if not (GOOGLE_API_KEY and GOOGLE_CSE_ID):
+def source_bbb(business_name: str, city: str, state: str, ua_idx: int = 0) -> dict:
+    out = {"email": None, "website": None, "phone": None}
+    try:
+        r = SESSION.get(
+            "https://www.bbb.org/search",
+            params={"find_text": business_name, "find_loc": f"{city} {state}"},
+            headers=_ua_headers(ua_idx), timeout=10,
+        )
+        if r.status_code != 200:
+            return out
+        soup = BeautifulSoup(r.text, "lxml")
+        mailtos = [a.get("href", "")[7:].split("?")[0]
+                   for a in soup.find_all("a", href=True)
+                   if a["href"].lower().startswith("mailto:")]
+        text_emails = EMAIL_RE.findall(soup.get_text(" "))
+        out["email"] = pick_best_email(mailtos + text_emails, business_name)
+        m = PHONE_RE.search(soup.get_text(" "))
+        if m:
+            out["phone"] = m.group(0).strip()
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("http") and "bbb.org" not in href and "google" not in href:
+                out["website"] = href
+                break
+    except Exception:
+        return out
+    return out
+
+
+# ── Source 3: ValueSerp ────────────────────────────────────────────────────────────
+
+def source_valueserp(name: str, city: str, state: str) -> dict:
+    """Returns {email, website, phone}. Spends one ValueSerp call (caller checks
+    the daily cap before calling)."""
+    out = {"email": None, "website": None, "phone": None}
+    if not VALUESERP_KEY:
         return out
     query = f'"{name}" "{city}" {state} contractor email'
     try:
         r = SESSION.get(
-            "https://www.googleapis.com/customsearch/v1",
-            params={"key": GOOGLE_API_KEY, "cx": GOOGLE_CSE_ID, "q": query, "num": 5},
-            timeout=10,
+            "https://api.valueserp.com/search",
+            params={"api_key": VALUESERP_KEY, "q": query, "num": 5},
+            timeout=15,
         )
-        gcs_increment()
+        valueserp_increment()
         if r.status_code != 200:
             return out
-        items = r.json().get("items", []) or []
+        results = r.json().get("organic_results", []) or []
     except Exception:
         return out
 
     snippet_emails = []
-    for it in items:
+    for it in results:
         blob = f"{it.get('title','')} {it.get('snippet','')}"
         snippet_emails.extend(EMAIL_RE.findall(blob))
         if not out["phone"]:
@@ -288,8 +357,7 @@ def source_google_cse(name: str, city: str, state: str) -> dict:
                 out["phone"] = m.group(0).strip()
     out["email"] = pick_best_email(snippet_emails, name)
 
-    # First non-directory result becomes the website to scrape.
-    for it in items:
+    for it in results:
         link = it.get("link", "")
         dom = urlparse(link).netloc.lower()
         if link and not any(s in dom for s in (
@@ -300,18 +368,19 @@ def source_google_cse(name: str, city: str, state: str) -> dict:
     return out
 
 
-# ── Source 2: SerpAPI Google Maps ────────────────────────────────────────────────
+# ── Source 3b: SerpAPI (Google Maps for website, Google organic for email) ───────
 
-def source_serpapi_maps(business_name: str, city: str, state: str) -> dict:
-    out = {"email": None, "phone": None, "website": None}
+def serpapi_maps(name: str, city: str, state: str) -> dict:
+    """engine=google_maps → {email, website, phone} from the top local result.
+    Spends one SerpAPI credit (caller checks the daily cap first)."""
+    out = {"email": None, "website": None, "phone": None}
     if not SERPAPI_KEY:
         return out
     try:
         r = SESSION.get(
             "https://serpapi.com/search",
             params={"engine": "google_maps", "type": "search",
-                    "q": f"{business_name} {city} {state}",
-                    "api_key": SERPAPI_KEY},
+                    "q": f"{name} {city} {state}", "api_key": SERPAPI_KEY},
             timeout=15,
         )
         serpapi_increment()
@@ -331,40 +400,107 @@ def source_serpapi_maps(business_name: str, city: str, state: str) -> dict:
         top = locals_[0]
         out["website"] = top.get("website")
         out["phone"] = top.get("phone")
-        for key in ("email", "emails"):
-            val = top.get(key)
-            if isinstance(val, list) and val:
-                out["email"] = val[0]
-            elif isinstance(val, str) and val:
-                out["email"] = val
+        val = top.get("email") or top.get("emails")
+        if isinstance(val, list) and val:
+            out["email"] = val[0]
+        elif isinstance(val, str) and val:
+            out["email"] = val
     return out
 
 
-# ── Source 3: BBB scraper ─────────────────────────────────────────────────────────
-
-def source_bbb(business_name: str, city: str, state: str, ua_idx: int = 0) -> dict:
-    out = {"email": None, "phone": None, "website": None}
+def serpapi_google(name: str, city: str, state: str) -> dict:
+    """engine=google organic → {email, website} from result snippets/links.
+    Spends one SerpAPI credit (caller checks the daily cap first)."""
+    out = {"email": None, "website": None, "phone": None}
+    if not SERPAPI_KEY:
+        return out
     try:
         r = SESSION.get(
-            "https://www.bbb.org/search",
-            params={"find_text": business_name, "find_loc": f"{city} {state}"},
-            headers=_ua_headers(ua_idx), timeout=10,
+            "https://serpapi.com/search",
+            params={"engine": "google", "q": f"{name} {city} {state} email",
+                    "num": 3, "api_key": SERPAPI_KEY},
+            timeout=15,
         )
+        serpapi_increment()
         if r.status_code != 200:
             return out
-        soup = BeautifulSoup(r.text, "lxml")
-        mailtos = [a.get("href", "")[7:] for a in soup.find_all("a", href=True)
-                   if a["href"].lower().startswith("mailto:")]
-        emails = [m.split("?")[0] for m in mailtos if m]
-        emails.extend(EMAIL_RE.findall(soup.get_text(" ")))
-        out["email"] = pick_best_email(emails, business_name)
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if href.startswith("http") and "bbb.org" not in href:
-                out["website"] = href
-                break
+        results = r.json().get("organic_results", []) or []
     except Exception:
         return out
+
+    snippet_emails = []
+    for it in results:
+        blob = f"{it.get('title','')} {it.get('snippet','')}"
+        snippet_emails.extend(EMAIL_RE.findall(blob))
+        if not out["phone"]:
+            m = PHONE_RE.search(blob)
+            if m:
+                out["phone"] = m.group(0).strip()
+    out["email"] = pick_best_email(snippet_emails, name)
+    for it in results:
+        link = it.get("link", "")
+        dom = urlparse(link).netloc.lower()
+        if link and not any(s in dom for s in (
+                "yelp.", "facebook.", "linkedin.", "bbb.org", "youtube.",
+                "google.", "indeed.", "mapquest.", "yellowpages.")):
+            out["website"] = link
+            break
+    return out
+
+
+# ── Source 1: SAM.gov federal contractor registry (local CSV) ────────────────────
+
+_SAM_INDEX: dict | None = None
+_SAM_LOADED = False
+
+
+def load_sam_csv() -> dict | None:
+    """Load data/raw/sam_gov_entities.csv into {normalized_entity_name: email}.
+    Returns None when the file isn't present. Columns are detected fuzzily so
+    'Entity_Name' / 'PHYSICAL_ADDRESS_EMAIL_ADDRESS' variants all work."""
+    global _SAM_INDEX, _SAM_LOADED
+    if _SAM_LOADED:
+        return _SAM_INDEX
+    _SAM_LOADED = True
+    if not SAM_CSV.exists():
+        _SAM_INDEX = None
+        return None
+
+    idx: dict[str, str] = {}
+    try:
+        with SAM_CSV.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames or []
+
+            def find(*needles):
+                for h in headers:
+                    hl = h.lower().replace(" ", "_")
+                    if all(n in hl for n in needles):
+                        return h
+                return None
+
+            name_col  = find("entity", "name") or find("legal", "business", "name") or find("entity")
+            email_col = find("email")
+            if not name_col or not email_col:
+                _SAM_INDEX = {}
+                return _SAM_INDEX
+            for row in reader:
+                nm = normalize_name(row.get(name_col, ""))
+                em = (row.get(email_col, "") or "").strip().lower()
+                if nm and "@" in em and not is_bad_email(em):
+                    idx.setdefault(nm, em)
+    except Exception:
+        _SAM_INDEX = {}
+        return _SAM_INDEX
+    _SAM_INDEX = idx
+    return idx
+
+
+def source_sam_gov(business_name: str) -> dict:
+    out = {"email": None, "website": None, "phone": None}
+    idx = load_sam_csv()
+    if idx:
+        out["email"] = idx.get(normalize_name(business_name))
     return out
 
 
@@ -377,8 +513,8 @@ def ensure_source_column(conn):
 
 
 def get_leads(conn, states: list[str], limit: int) -> list[dict]:
-    """Unmatched liens (no lien_dbpr_contacts row, OR existing row with no email)
-    in the given states, highest amount first."""
+    """Unmatched liens (no lien_dbpr_contacts row with an email) in the given
+    states, highest amount first."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -410,12 +546,14 @@ def get_leads(conn, states: list[str], limit: int) -> list[dict]:
 
 
 def insert_contact(conn, lien: dict, email: str, phone: str | None,
-                   source: str) -> None:
-    """Insert/update enriched contact. ON CONFLICT only fills email/phone when the
-    new value is non-null AND the existing value is null (fill-if-empty)."""
+                   source: str) -> str:
+    """Insert/update enriched contact. dbpr_score per source; confidence
+    medium/low by domain match. ON CONFLICT fills email/phone only when the
+    existing value is null (fill-if-empty)."""
     debtor = (lien.get("debtor_name") or lien.get("business_name") or "")[:250]
     biz    = lien.get("business_name") or lien.get("debtor_name") or ""
-    confidence = "medium" if email_matches_business(email, biz) else "low"
+    confidence = confidence_for(email, biz)
+    score = SOURCE_SCORE.get(source, 50)
     phone = (phone or None)
     if phone:
         phone = phone[:50]
@@ -435,8 +573,7 @@ def insert_contact(conn, lien: dict, email: str, phone: str | None,
                 source     = COALESCE(lien_dbpr_contacts.source, EXCLUDED.source)
             """,
             (lien["lien_id"], lien["county_id"], debtor, debtor,
-             email.lower().strip(), phone, lien["state"], confidence,
-             DBPR_SCORE, source),
+             email.lower().strip(), phone, lien["state"], confidence, score, source),
         )
     conn.commit()
     return confidence
@@ -445,47 +582,59 @@ def insert_contact(conn, lien: dict, email: str, phone: str | None,
 # ── Per-lead enrichment orchestration ────────────────────────────────────────────
 
 def enrich_one(lien: dict, sources: set[str], ua_idx: int) -> dict:
-    """Run the source chain for one lien. Returns
-    {email, phone, source} (source is the originating source, '' if none)."""
-    name  = (lien.get("search_name") or "").strip()
+    """Run the active sources in order SAM → BBB → SerpAPI → ValueSerp →
+    Website. Returns {email, phone, source}."""
     biz   = lien.get("business_name") or lien.get("debtor_name") or ""
     city  = (lien.get("county_name") or "").replace(" County", "").strip()
-    state = STATE_NAMES.get(lien["state"], lien["state"])
+    state = lien["state"]
     found = {"email": None, "phone": None, "source": ""}
+    website = None
 
-    # Source 1: Google CSE (only if quota remains).
-    if "google" in sources and gcs_remaining() > 0:
-        g = source_google_cse(name, city, state)
-        found["phone"] = found["phone"] or g.get("phone")
-        if g.get("email"):
-            return {"email": g["email"], "phone": found["phone"], "source": "google_cse"}
-        if g.get("website"):
-            em, ph = scrape_website(g["website"], biz)
-            if em:
-                return {"email": em, "phone": found["phone"] or ph, "source": "google_cse"}
+    # 1) SAM.gov (local CSV).
+    if "sam" in sources:
+        s = source_sam_gov(biz)
+        if s.get("email"):
+            return {"email": s["email"], "phone": found["phone"], "source": "sam_gov"}
+        website = website or s.get("website")
 
-    # Source 2: SerpAPI Maps — only when CSE produced nothing.
-    if "serp" in sources and SERPAPI_KEY:
-        s = source_serpapi_maps(biz, city, state)
-        found["phone"] = found["phone"] or s.get("phone")
-        if s.get("email") and not is_bad_email(s["email"]):
-            return {"email": s["email"], "phone": found["phone"], "source": "serpapi"}
-        if s.get("website"):
-            em, ph = scrape_website(s["website"], biz)
-            if em:
-                return {"email": em, "phone": found["phone"] or ph, "source": "serpapi"}
-
-    # Source 3: BBB — company-style names only.
+    # 2) BBB (company-style names only).
     if "bbb" in sources and is_company_name(biz):
         time.sleep(2.0)  # polite
         b = source_bbb(biz, city, state, ua_idx)
         found["phone"] = found["phone"] or b.get("phone")
         if b.get("email"):
             return {"email": b["email"], "phone": found["phone"], "source": "bbb"}
-        if b.get("website"):
-            em, ph = scrape_website(b["website"], biz)
-            if em:
-                return {"email": em, "phone": found["phone"] or ph, "source": "bbb"}
+        website = website or b.get("website")
+
+    # 3) SerpAPI Google Maps — fast official-website lookup (and email if the
+    #    listing exposes one). Falls back to Google organic only when Maps gives
+    #    us nothing and the cap still allows. Each HTTP call spends one credit.
+    if "serpapi" in sources and SERPAPI_KEY and serpapi_remaining() > 0:
+        m = serpapi_maps(biz, city, state)
+        found["phone"] = found["phone"] or m.get("phone")
+        if m.get("email"):
+            return {"email": m["email"], "phone": found["phone"], "source": "serpapi"}
+        website = website or m.get("website")
+        if not website and serpapi_remaining() > 0:
+            g = serpapi_google(biz, city, state)
+            found["phone"] = found["phone"] or g.get("phone")
+            if g.get("email"):
+                return {"email": g["email"], "phone": found["phone"], "source": "serpapi"}
+            website = website or g.get("website")
+
+    # 4) ValueSerp organic (broader email hunt; only while the daily cap allows).
+    if "valueserp" in sources and VALUESERP_KEY and valueserp_remaining() > 0:
+        v = source_valueserp(biz, city, state)
+        found["phone"] = found["phone"] or v.get("phone")
+        if v.get("email"):
+            return {"email": v["email"], "phone": found["phone"], "source": "valueserp"}
+        website = website or v.get("website")
+
+    # 5) Website scraper — fired on any URL surfaced above.
+    if "website" in sources and website:
+        em, ph = scrape_website(website, biz)
+        if em:
+            return {"email": em, "phone": found["phone"] or ph, "source": "website"}
 
     return found
 
@@ -493,36 +642,35 @@ def enrich_one(lien: dict, sources: set[str], ua_idx: int) -> dict:
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Multi-source free email enrichment (TX/AZ/GA)")
+    parser = argparse.ArgumentParser(description="Multi-source email enrichment (TX/AZ/GA)")
     parser.add_argument("--dry-run", action="store_true", help="Show matches, don't insert")
     parser.add_argument("--state", choices=["TX", "AZ", "GA"], help="Limit to one state")
-    parser.add_argument("--limit", type=int, default=None, help="Override the daily cap")
-    parser.add_argument("--source", choices=["google", "serp", "bbb"], help="Run only one source")
-    parser.add_argument("--reset-quota", action="store_true", help="Reset daily counters and exit")
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Max leads (default 200)")
+    parser.add_argument("--source", choices=["sam", "bbb", "serpapi", "valueserp", "website"],
+                        help="Run only one source")
+    parser.add_argument("--reset-quota", action="store_true", help="Reset daily API counters and exit")
     args = parser.parse_args()
 
     if args.reset_quota:
         reset_quota()
         return
 
-    sources = {args.source} if args.source else {"google", "serp", "bbb"}
+    sources = {args.source} if args.source else {"sam", "bbb", "serpapi", "valueserp", "website"}
     states  = [args.state] if args.state else DEFAULT_STATES
+    limit   = max(1, args.limit)
 
-    # Lead cap: driven by remaining Google CSE quota (the primary source), unless
-    # overridden or Google isn't in play.
-    if args.limit is not None:
-        limit = max(0, args.limit)
-    elif "google" in sources:
-        limit = gcs_remaining()
-    else:
-        limit = 50
-
-    print(f"\n{'='*66}")
-    print(f"  Free Multi-Source Email Enrichment")
+    print(f"\n{'='*68}")
+    print(f"  Multi-Source Email Enrichment")
     print(f"  States  : {', '.join(states)}   Sources: {', '.join(sorted(sources))}")
-    print(f"  Limit   : {limit}   (Google CSE remaining today: {gcs_remaining()}/{GCS_DAILY_LIMIT})")
+    print(f"  Limit   : {limit}   (SerpAPI: {serpapi_remaining()}/{SERPAPI_CAP}, "
+          f"ValueSerp: {valueserp_remaining()}/{VALUESERP_CAP} remaining today)")
     print(f"  {'DRY RUN — no DB writes' if args.dry_run else 'LIVE — inserting into lien_dbpr_contacts'}")
-    print(f"{'='*66}\n")
+    print(f"{'='*68}\n")
+
+    if "sam" in sources and not SAM_CSV.exists():
+        print(f"  ⚠ SAM.gov bulk CSV not found at {SAM_CSV}")
+        print(f"    Download the entity extract from https://sam.gov/data-services")
+        print(f"    and save it there to enable SAM matching (skipped for now).\n")
 
     logger = None
     if not args.dry_run:
@@ -533,15 +681,7 @@ def main():
         except ImportError:
             logger = None
 
-    if limit <= 0:
-        print("  Daily Google CSE quota exhausted — nothing to do. (Use --limit or --reset-quota.)")
-        if logger:
-            logger.step_skip("enrich", "google quota exhausted")
-            logger.finish({"enriched": 0, "reason": "quota_exhausted"})
-        return
-
-    # Per-source yield tracking.
-    yields = {"google_cse": 0, "serpapi": 0, "bbb": 0}
+    yields = {"sam_gov": 0, "bbb": 0, "serpapi": 0, "valueserp": 0, "website": 0}
     by_state = {s: {"searched": 0, "found": 0} for s in states}
     enriched = 0
 
@@ -576,7 +716,7 @@ def main():
                 by_state[st]["found"] += 1
                 yields[src] = yields.get(src, 0) + 1
                 if args.dry_run:
-                    conf = "medium" if email_matches_business(email, lien.get("business_name") or debtor) else "low"
+                    conf = confidence_for(email, lien.get("business_name") or debtor)
                     print(f"{prefix} {email} [{src}/{conf}]{' ☎'+phone if phone else ''} [DRY RUN]")
                 else:
                     conf = insert_contact(conn, lien, email, phone, src)
@@ -585,35 +725,34 @@ def main():
             else:
                 print(f"{prefix} no email")
 
-            # Stop early if Google was our engine and its quota just ran out.
-            if "google" in sources and sources == {"google"} and gcs_remaining() <= 0:
-                print("\n  Google CSE daily quota reached — stopping.")
-                break
-
         # ── Summary ──
-        print(f"\n{'─'*66}")
+        print(f"\n{'─'*68}")
         for st in states:
             s = by_state[st]
             print(f"  {st}: searched {s['searched']} / found {s['found']} emails")
-        final = (f"Enriched {0 if args.dry_run else enriched} new emails today | "
-                 f"Google CSE: {gcs_used()}/{GCS_DAILY_LIMIT} used | "
-                 f"SerpAPI: {serpapi_used()} credits used | "
-                 f"BBB: {yields.get('bbb', 0)} matches")
-        print(f"\n  {final}")
-        print(f"{'─'*66}\n")
+        shown = sum(by_state[s]["found"] for s in states) if args.dry_run else enriched
+        print(f"\n  Enriched {shown} new emails today | "
+              f"SAM: {yields['sam_gov']} | BBB: {yields['bbb']} | "
+              f"SerpAPI: {yields['serpapi']} ({serpapi_used()}/{SERPAPI_CAP} used) | "
+              f"ValueSerp: {yields['valueserp']} ({valueserp_used()}/{VALUESERP_CAP} used) | "
+              f"Website: {yields['website']}")
+        print(f"{'─'*68}\n")
 
         if logger:
             logger.step_done("enrich", ok=True,
-                             detail=f"{enriched} enriched "
-                                    f"(g:{yields['google_cse']} s:{yields['serpapi']} b:{yields['bbb']})")
+                             detail=f"{enriched} enriched (sam:{yields['sam_gov']} "
+                                    f"bbb:{yields['bbb']} sa:{yields['serpapi']} "
+                                    f"vs:{yields['valueserp']} web:{yields['website']})")
             logger.finish({
-                "enriched":          enriched,
-                "google_cse_yield":  yields["google_cse"],
-                "serpapi_yield":     yields["serpapi"],
-                "bbb_yield":         yields["bbb"],
-                "google_cse_used":   gcs_used(),
-                "serpapi_used":      serpapi_used(),
-                "leads_processed":   sum(s["searched"] for s in by_state.values()),
+                "enriched":        enriched,
+                "sam_gov_yield":   yields["sam_gov"],
+                "bbb_yield":       yields["bbb"],
+                "serpapi_yield":   yields["serpapi"],
+                "valueserp_yield": yields["valueserp"],
+                "website_yield":   yields["website"],
+                "serpapi_used":    serpapi_used(),
+                "valueserp_used":  valueserp_used(),
+                "leads_processed": sum(s["searched"] for s in by_state.values()),
             })
     except Exception as e:
         conn.rollback()
