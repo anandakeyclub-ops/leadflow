@@ -642,6 +642,8 @@ It is what can come after it: levy notices, bank account levies, wage garnishmen
 
 There are usually intervention points — but the window narrows as the IRS timeline progresses. Takes 60 seconds to see what may still apply.
 
+One quick question before you click anything: did you receive a CP503 or CP504 notice in the last 90 days? Just hit reply with a yes or no. It takes 5 seconds and helps me point you to the right path.
+
 {landing_url}
 
 Romy
@@ -654,6 +656,9 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
 <p>It is what can come after it: <strong>levy notices, bank account levies, wage garnishments, or pressure on business cash flow.</strong></p>
 <p style="color:#8b0000;font-size:15px;">⚠️ There are usually intervention points — but the window narrows as the IRS timeline progresses.</p>
 <p><strong>Takes 60 seconds to see what may still apply.</strong></p>
+<p style="background:#f8f4e8;border-left:3px solid #d4a843;padding:12px 16px;margin:20px 0;font-size:15px;">
+💬 <strong>One quick question:</strong> Did you receive a CP503 or CP504 notice in the last 90 days? Just hit reply with yes or no — it takes 5 seconds and helps me point you to the right path.
+</p>
 {button_html(cta_label, cta_url)}
 <p>Romy<br>TaxCase Review</p>"""
 
@@ -670,6 +675,8 @@ Those answers determine the real options.
 
 Those answers take about 60 seconds to map out. No obligation.
 
+If any of those questions apply to your situation, hit reply and tell me one thing: what type of business do you run? I read every reply personally.
+
 {landing_url}
 
 Romy
@@ -683,6 +690,9 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
 <p>The better questions are: Are all returns filed? Is the IRS still inside the collection window? Is there ability to pay? Is there a lien, levy threat, or business payroll issue?</p>
 <p>Those answers determine the real options.</p>
 <p><strong>Those answers take about 60 seconds to map out. No obligation.</strong></p>
+<p style="background:#f8f4e8;border-left:3px solid #d4a843;padding:12px 16px;margin:20px 0;font-size:15px;">
+💬 <strong>Hit reply</strong> and tell me one thing: what type of business do you run? I read every reply personally. — Romy
+</p>
 {button_html(cta_label, cta_url)}
 <p>Romy<br>TaxCase Review</p>"""
 
