@@ -463,6 +463,41 @@ def choose_cta(step: int, lead: dict) -> tuple[str, str]:
     return label, f"cta_v{idx+1}"
 
 
+# State abbreviation -> URL slug for the per-county landing pages. Only states
+# with built-out county pages are mapped; anything else falls through to the
+# city-level page, then BOOKING_LINK.
+STATE_SLUGS = {
+    "FL": "florida", "TX": "texas", "GA": "georgia", "AZ": "arizona",
+    "CA": "california", "IL": "illinois", "NY": "new-york",
+    "NC": "north-carolina", "PA": "pennsylvania", "OH": "ohio",
+}
+
+
+def get_landing_url(lead: dict) -> str:
+    """Personalized landing page for a lead's CTA.
+
+    Prefers the county-level page (https://taxcasereview.org/<state>/<county>),
+    falls back to a city-level page (.../<city>-tax-lien-help), then to
+    BOOKING_LINK when neither county nor city is available.
+    """
+    state_slug = STATE_SLUGS.get(str(lead.get("state") or "").strip().upper())
+
+    county_raw = (lead.get("county_name") or "").strip()
+    if county_raw.lower().endswith("county"):
+        county_raw = county_raw[:-6].strip()
+    county_slug = county_raw.lower().replace(" ", "-") if county_raw else ""
+
+    if state_slug and county_slug:
+        return f"https://taxcasereview.org/{state_slug}/{county_slug}"
+
+    city = (lead.get("city") or "").strip()
+    if city:
+        city_slug = city.lower().replace(" ", "-")
+        return f"https://taxcasereview.org/{city_slug}-tax-lien-help"
+
+    return BOOKING_LINK
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Email copy
 # ──────────────────────────────────────────────────────────────────────────────
@@ -507,7 +542,8 @@ def build_email(step: int, lead: dict, tracking_id: str) -> EmailContent:
         "final_close_loop",
     ][step]
 
-    cta_url = tracked_link(tracking_id, BOOKING_LINK, {
+    landing_url = get_landing_url(lead)
+    cta_url = tracked_link(tracking_id, landing_url, {
         "utm_content": f"step_{step}_{subject_variant}_{cta_variant}",
         "step": step,
     })
@@ -520,7 +556,7 @@ I was reviewing public records in {county} County and saw a {lien_type} record t
 
 I am not reaching out to scare you. The useful question is usually: what is the IRS likely to do next, and what options are still available?
 
-You can start here: {BOOKING_LINK}
+You can start here: {landing_url}
 
 It takes about 60 seconds to answer the first questions.
 
@@ -551,7 +587,7 @@ The better time to review options is before the levy stage.
 
 The IRS can move from lien to levy without additional warning. Takes 60 seconds to see where you stand.
 
-{BOOKING_LINK}
+{landing_url}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -581,7 +617,7 @@ Takes 60 seconds. No obligation. You will see which options may apply to your sp
 
 The IRS 10-year collection clock is running on most liens. Options narrow over time.
 
-{BOOKING_LINK}
+{landing_url}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -606,7 +642,7 @@ It is what can come after it: levy notices, bank account levies, wage garnishmen
 
 There are usually intervention points — but the window narrows as the IRS timeline progresses. Takes 60 seconds to see what may still apply.
 
-{BOOKING_LINK}
+{landing_url}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -634,7 +670,7 @@ Those answers determine the real options.
 
 Those answers take about 60 seconds to map out. No obligation.
 
-{BOOKING_LINK}
+{landing_url}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -661,7 +697,7 @@ An LLC or corporation does not always protect the person responsible for payroll
 
 The Trust Fund Recovery Penalty can follow a business owner personally — even after the business closes. Takes 60 seconds to see if this applies.
 
-{BOOKING_LINK}
+{landing_url}
 
 Romy
 TaxCase Review | (561) 247-0678
@@ -684,7 +720,7 @@ Last note from me. I do not want to keep showing up in your inbox.
 
 If the {county} County lien issue is already handled, no problem.
 
-If it is still open and you want to understand possible IRS resolution paths, the starting point is here: {BOOKING_LINK}
+If it is still open and you want to understand possible IRS resolution paths, the starting point is here: {landing_url}
 
 Otherwise, I will leave you alone.
 
