@@ -34,6 +34,7 @@ SCHEDULE = {
     "email_enrichment":   ["mon", "tue", "wed", "thu", "fri", "sat"],
     "daily_summary":      ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
     "weekly_intel":       ["sun"],
+    "county_lien_intel":  ["sun"],
     "monthly_report":     [1],  # day of month
     "guest_post_outreach":["mon", "tue", "wed", "thu", "fri"],
 }

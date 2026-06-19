@@ -1271,6 +1271,7 @@ def build_weekly_calendar_section() -> str:
         ("✉️ Email enrichment",    "email_enrichment",    _default_didrun("email_enrichment")),
         ("📊 Daily summary",       "daily_summary",       _default_didrun("daily_summary")),
         ("🛰️ Weekly intel",        "weekly_intel",        _default_didrun("weekly_intel")),
+        ("🏛️ County lien intel",   "county_lien_intel",   _default_didrun("county_lien_intel")),
         ("🗓️ Monthly report",      "monthly_report",      _default_didrun("monthly_report")),
         ("🔗 Guest post outreach", "guest_post_outreach", _default_didrun("guest_post_outreach")),
     ]
