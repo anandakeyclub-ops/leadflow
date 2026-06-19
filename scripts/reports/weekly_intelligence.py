@@ -773,7 +773,7 @@ def main():
 
     try:
         from pipeline_log import PipelineLogger
-        logger = PipelineLogger("weekly_intelligence")
+        logger = PipelineLogger("weekly_intel")
         logger.start()
     except ImportError:
         logger = None

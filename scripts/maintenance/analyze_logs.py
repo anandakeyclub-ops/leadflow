@@ -56,7 +56,7 @@ for log_file in log_files:
         print(f"\n  {icon} [{started}] {run_type} — {status} ({duration:.1f}s)")
 
         # Email sequence details
-        if run_type == "email_sequence":
+        if run_type == "email_sends":
             email_stats["runs"] += 1
             sent   = metrics.get('total_sent', 0)
             failed = metrics.get('total_failed', 0)

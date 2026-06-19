@@ -1124,7 +1124,7 @@ def main() -> None:
 
     try:
         from pipeline_log import PipelineLogger
-        logger = PipelineLogger("email_sequence")
+        logger = PipelineLogger("email_sends")
         logger.start()
     except Exception:
         logger = None

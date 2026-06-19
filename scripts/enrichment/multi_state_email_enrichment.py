@@ -1777,7 +1777,7 @@ def main():
 
     try:
         from pipeline_log import PipelineLogger
-        logger = PipelineLogger("multi_state_email_enrichment")
+        logger = PipelineLogger("email_enrichment")
         logger.start()
     except ImportError:
         logger = None

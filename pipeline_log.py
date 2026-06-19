@@ -44,7 +44,7 @@ class PipelineLogger:
     Drop-in logger for any LeadFlow script.
 
     Usage:
-        logger = PipelineLogger("email_sequence")
+        logger = PipelineLogger("email_sends")
         logger.start()
         logger.step_start("step1")
         logger.step_done("step1", ok=True, detail="60 sent")

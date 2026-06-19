@@ -1225,8 +1225,15 @@ def _blog_publish_dates() -> set:
 
 def build_weekly_calendar_section() -> str:
     """Full-week scheduled-vs-actual grid (rows = automation, cols = Mon→Sun).
-    ✅ ran+ok · ❌ scheduled but missing/failed · ⬜ scheduled (upcoming) · ➖ not scheduled."""
+    ✅ ran+ok · ❌ scheduled but missing/failed · ⬜ scheduled (upcoming) · ➖ not scheduled.
+
+    Scheduling comes from scripts/schedule_config.SCHEDULE (the single source of
+    truth) — NOT inferred from log history. A task's SCHEDULE key is also its
+    PipelineLogger run_type, so "did it run" is a key-for-key log lookup; only
+    email sends and blog posts use their own dedicated signals (DB / publish
+    history) instead of a pipeline-log record."""
     from datetime import date, timedelta
+    from scripts.schedule_config import SCHEDULE, is_scheduled_on
     today  = date.today()
     monday = today - timedelta(days=today.weekday())
     days   = [monday + timedelta(days=i) for i in range(7)]          # Mon..Sun
@@ -1236,43 +1243,57 @@ def build_weekly_calendar_section() -> str:
     email_counts = safe_query(lambda cur: _email_sends_by_day(cur, monday), {})
     blog_dates   = _blog_publish_dates()
 
-    def ran_ok(d, pred) -> bool:
-        return any(r.get("status") == "ok" and pred(r.get("run_type", "")) for r in runs_by_day[d])
+    def ran_ok(d, task_key: str) -> bool:
+        return any(r.get("status") == "ok" and r.get("run_type", "") == task_key
+                   for r in runs_by_day[d])
 
-    # (label, scheduled?(weekday 0=Mon), ran+succeeded?(day))
+    # Display label + how to tell whether the task actually ran+succeeded on a
+    # day. Every key here must exist in SCHEDULE; scheduling is read from there.
+    # Default detection = a successful pipeline-log record under the same key.
+    def _default_didrun(task_key):
+        return lambda d: ran_ok(d, task_key)
+
     automations = [
-        ("📧 Email sends",   lambda wd: wd in (0, 1, 2, 3, 5),                       # Mon-Thu + Sat
+        ("📧 Email sends",         "email_sends",
          lambda d: email_counts.get(d.isoformat(), 0) > 0),
-        ("📱 Social post",   lambda wd: True,
-         lambda d: ran_ok(d, lambda t: t == "social_post")),
-        ("🎬 Reel",          lambda wd: wd in (2, 3, 6),                             # Wed, Thu, Sun
-         lambda d: ran_ok(d, lambda t: t.startswith("reel_"))),
-        ("📝 Blog post",     lambda wd: wd in (0, 1, 2, 3, 4, 5),                    # Mon-Sat
+        ("📱 Social post",         "social_post",         _default_didrun("social_post")),
+        ("🎬 Reel (HeyGen)",       "reel_heygen",         _default_didrun("reel_heygen")),
+        ("🎬 Reel (Remotion)",     "reel_remotion",       _default_didrun("reel_remotion")),
+        ("📝 Blog post",           "blog_post",
          lambda d: d.isoformat() in blog_dates),
-        ("📥 Data collection", lambda wd: wd != 6,                                   # Mon-Sat 6:30 AM (run_daily.py: Sun = rest)
-         lambda d: ran_ok(d, lambda t: t.startswith("data_collection_"))),
-        ("🛰️ Weekly intel",  lambda wd: wd == 6,                                     # Sun 7:30 AM
-         lambda d: ran_ok(d, lambda t: t == "weekly_intelligence")),
-        ("📊 Daily summary", lambda wd: True,                                        # daily 6 PM
-         lambda d: ran_ok(d, lambda t: t == "daily_summary")),
+        ("📥 Data collection FL",  "data_collection_fl",  _default_didrun("data_collection_fl")),
+        ("📥 Data collection TX",  "data_collection_tx",  _default_didrun("data_collection_tx")),
+        ("📥 Data collection GA",  "data_collection_ga",  _default_didrun("data_collection_ga")),
+        ("📥 Data collection IL",  "data_collection_il",  _default_didrun("data_collection_il")),
+        ("📥 Data collection AZ",  "data_collection_az",  _default_didrun("data_collection_az")),
+        ("🎯 Lead scoring",        "lead_scoring",        _default_didrun("lead_scoring")),
+        ("📄 Collection pages",    "collection_pages",    _default_didrun("collection_pages")),
+        ("✉️ Email enrichment",    "email_enrichment",    _default_didrun("email_enrichment")),
+        ("📊 Daily summary",       "daily_summary",       _default_didrun("daily_summary")),
+        ("🛰️ Weekly intel",        "weekly_intel",        _default_didrun("weekly_intel")),
+        ("🗓️ Monthly report",      "monthly_report",      _default_didrun("monthly_report")),
+        ("🔗 Guest post outreach", "guest_post_outreach", _default_didrun("guest_post_outreach")),
     ]
 
     def cell(scheduled: bool, ok: bool, d) -> str:
-        if not scheduled:        return "<span style='color:#cbd5e1'>➖</span>"
-        if ok:                   return "✅"
-        if d > today:            return "<span style='color:#94a3b8'>⬜</span>"      # upcoming
-        return "<span style='color:#b91c1c'>❌</span>"                              # past/today, missing
+        if not scheduled:        return "<span style='color:#cbd5e1'>➖</span>"      # not scheduled today
+        if ok:                   return "✅"                                         # scheduled + ran ok
+        if d > today:            return "<span style='color:#94a3b8'>⬜</span>"      # scheduled, upcoming
+        return "<span style='color:#b91c1c'>❌</span>"                              # scheduled, past/today, missing/failed
 
     rows = []
-    for label, sched, didrun in automations:
-        cells = [cell(sched(d.weekday()), sched(d.weekday()) and didrun(d), d) for d in days]
+    for label, task_key, didrun in automations:
+        cells = []
+        for d in days:
+            scheduled = is_scheduled_on(task_key, d)
+            cells.append(cell(scheduled, scheduled and didrun(d), d))
         rows.append([label] + cells)
 
     headers = ["Automation"] + [f"{WD[d.weekday()]} {d.month}/{d.day}" for d in days]
     return sec("🗓️ Weekly Automation Calendar",
                simple_table(headers, rows),
-               "Scheduled vs actual, this week (Mon→Sun). "
-               "✅ ran+ok · ❌ scheduled but missing/failed · ⬜ scheduled (upcoming) · ➖ not scheduled.")
+               "Scheduled vs actual, this week (Mon→Sun), per scripts/schedule_config.SCHEDULE. "
+               "✅ scheduled + ran ok · ❌ scheduled but missing/failed · ⬜ scheduled (upcoming) · ➖ not scheduled.")
 
 
 def build_content_automation_section(runs: list[dict]) -> str:
@@ -1544,7 +1565,7 @@ def build_html(lead: dict, states: list[dict], counties: list[dict], seq: dict, 
     subject = f"📊 TaxCase Review Optimization Intelligence — {today}"
     _pipeline_runs = _read_pipeline_today()
     # Surface which account did today's cold sends (logged by send_email_sequence).
-    _email_run = _latest_run(_pipeline_runs, lambda t: t == "email_sequence")
+    _email_run = _latest_run(_pipeline_runs, lambda t: t == "email_sends")
     _sender = (_email_run or {}).get("metrics", {}) if _email_run else None
 
     html = f"""<!DOCTYPE html>

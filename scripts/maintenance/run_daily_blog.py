@@ -296,7 +296,7 @@ def main():
         try:
             sys.path.insert(0, str(REPO_ROOT))  # repo root for pipeline_log
             from pipeline_log import PipelineLogger
-            logger = PipelineLogger("blog")
+            logger = PipelineLogger("blog_post")
             logger.start()
         except ImportError:
             logger = None

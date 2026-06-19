@@ -591,7 +591,7 @@ def main():
 
     try:
         from pipeline_log import PipelineLogger
-        logger = PipelineLogger("monthly_state_reports")
+        logger = PipelineLogger("monthly_report")
         logger.start()
     except ImportError:
         logger = None
