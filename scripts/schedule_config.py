@@ -23,7 +23,7 @@ SCHEDULE = {
     "social_post":        ["mon", "tue", "wed", "thu", "sat"],
     "reel_heygen":        ["thu", "sun"],
     "reel_remotion":      ["wed"],
-    "blog_post":          ["mon", "tue", "wed", "thu", "fri"],
+    "blog_post":          ["mon", "tue", "wed", "thu", "fri", "sat"],
     "data_collection_fl": ["mon", "tue", "wed", "thu", "fri", "sat"],
     "data_collection_tx": ["mon", "tue", "wed", "thu", "fri", "sat"],
     "data_collection_ga": ["fri"],
