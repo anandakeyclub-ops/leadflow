@@ -42,6 +42,14 @@ try:
 except Exception as e:
     print(f"Warning: click tracking router not loaded: {e}")
 
+# Public lien search — aggregate county/state coverage for a search term
+# (no individual PII). Mounted at /api/lien-search.
+try:
+    from app.api.routes.lien_search import router as lien_search_router
+    app.include_router(lien_search_router)
+except Exception as e:
+    print(f"Warning: lien search router not loaded: {e}")
+
 # CRM pipeline — create lead/case/calendar appointment after a confirmed
 # Stripe payment. Called by the v0-tax-landing Stripe webhook.
 try:

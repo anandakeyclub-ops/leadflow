@@ -1,4 +1,8 @@
 ﻿data/
+# scripts/data/ holds code (the IRS bulk importer etc.), not runtime data —
+# re-include it (the directory first, then its .py files) so it stays tracked.
+!scripts/data/
+!scripts/data/*.py
 *.pdf
 *.json
 __pycache__/
