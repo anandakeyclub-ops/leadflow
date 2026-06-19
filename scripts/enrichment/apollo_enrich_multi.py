@@ -1,31 +1,34 @@
 #!/usr/bin/env python3
 """
-apollo_enrich_tx.py
-===================
-Enrich unmatched Texas liens with business contacts via the Apollo.io people
-search API, then insert the results into lien_dbpr_contacts so the rest of the
-pipeline (scoring → email pool → sequence) can pick them up.
+apollo_enrich_multi.py
+======================
+Enrich unmatched TX / AZ / GA liens with business contacts via the Apollo.io
+people search API, then insert the results into lien_dbpr_contacts so the rest
+of the pipeline (scoring → email pool → sequence) can pick them up.
 
-"Unmatched" means a normalized_liens row (state='TX') that has no corresponding
-lien_dbpr_contacts record yet. lien_dbpr_contacts.lien_id is a NOT NULL UNIQUE
-FK to normalized_liens.id, so every contact we insert is anchored to its lien —
-this mirrors _save_lien_email() in multi_state_email_enrichment.py.
+"Unmatched" means a normalized_liens row whose county is in TX/AZ/GA and that
+has no corresponding lien_dbpr_contacts record yet. lien_dbpr_contacts.lien_id
+is a NOT NULL UNIQUE FK to normalized_liens.id, so every contact we insert is
+anchored to its lien — this mirrors _save_lien_email() in
+multi_state_email_enrichment.py.
 
-Liens are pulled highest-amount-first so the limited free Apollo credits are
-spent on the highest-value cases. Default cap is 90 (the free credit grant).
+Liens are pulled highest-amount-first ACROSS all three states so the limited
+free Apollo credits are spent on the highest-value cases regardless of state.
+Default cap is 90 (the free credit grant).
 
 Note on schema: lien_dbpr_contacts has no first_name/last_name columns. Apollo's
 first + last name are combined into full_name (the matched contact's name),
 while debtor_name keeps the lien's original taxpayer name; phone is stored in
-the phone column.
+the phone column. state is taken from the lien's county (counties.state).
 
 Env:
   APOLLO_API_KEY  — required (Apollo.io API key)
 
 Usage:
-  python scripts/enrichment/apollo_enrich_tx.py
-  python scripts/enrichment/apollo_enrich_tx.py --limit 25
-  python scripts/enrichment/apollo_enrich_tx.py --dry-run    # calls Apollo, no DB writes
+  python scripts/enrichment/apollo_enrich_multi.py
+  python scripts/enrichment/apollo_enrich_multi.py --state AZ
+  python scripts/enrichment/apollo_enrich_multi.py --limit 25
+  python scripts/enrichment/apollo_enrich_multi.py --dry-run   # calls Apollo, no DB writes
 """
 from __future__ import annotations
 
@@ -59,6 +62,14 @@ REQUEST_DELAY  = 1.0
 MIN_CONFIDENCE = 0.7
 DEFAULT_LIMIT  = 90        # full free credit allocation
 
+# States this importer covers, and the Apollo organization_locations value for
+# each (Apollo expects a full state name, not the abbreviation).
+STATE_LOCATIONS = {
+    "TX": "Texas",
+    "AZ": "Arizona",
+    "GA": "Georgia",
+}
+
 # Emails Apollo returns when the address is locked behind credits — not usable.
 _LOCKED_EMAIL_MARKERS = ("email_not_unlocked", "@domain.com")
 
@@ -74,9 +85,10 @@ _STATUS_CONFIDENCE = {
 }
 
 
-def get_unmatched_tx_liens(conn, limit: int) -> list[dict]:
-    """normalized_liens rows (TX) with no lien_dbpr_contacts record yet, highest
-    lien amount first so the free credits go to the highest-value cases."""
+def get_unmatched_liens(conn, states: list[str], limit: int) -> list[dict]:
+    """normalized_liens rows whose county is in `states` and that have no
+    lien_dbpr_contacts record yet, highest lien amount first ACROSS states so
+    the free credits go to the highest-value cases regardless of state."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -84,13 +96,14 @@ def get_unmatched_tx_liens(conn, limit: int) -> list[dict]:
                 nl.id                                          AS lien_id,
                 nl.county_id                                   AS county_id,
                 c.county_name                                  AS county_name,
+                c.state                                        AS state,
                 nl.business_name                               AS business_name,
                 nl.debtor_name                                 AS debtor_name,
                 nl.amount                                      AS amount,
                 COALESCE(NULLIF(nl.business_name, ''), nl.debtor_name) AS search_name
             FROM normalized_liens nl
             JOIN counties c ON c.id = nl.county_id
-            WHERE nl.state = 'TX'
+            WHERE c.state = ANY(%s)
               AND COALESCE(NULLIF(nl.business_name, ''), nl.debtor_name) IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1 FROM lien_dbpr_contacts d
@@ -99,15 +112,16 @@ def get_unmatched_tx_liens(conn, limit: int) -> list[dict]:
             ORDER BY nl.amount DESC NULLS LAST, nl.id
             LIMIT %s
             """,
-            (limit,),
+            (states, limit),
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def apollo_people_search(query_name: str) -> dict | None:
-    """Call Apollo people search for a single organization name. Returns the
-    parsed JSON, or None on transport/HTTP error (logged, never raised)."""
+def apollo_people_search(query_name: str, location: str) -> dict | None:
+    """Call Apollo people search for a single organization name, scoped to the
+    given state location. Returns the parsed JSON, or None on transport/HTTP
+    error (logged, never raised)."""
     try:
         r = requests.post(
             APOLLO_URL,
@@ -119,7 +133,7 @@ def apollo_people_search(query_name: str) -> dict | None:
             },
             json={
                 "q_organization_name":    query_name,
-                "organization_locations": ["Texas"],
+                "organization_locations": [location],
                 "per_page":               1,
             },
             timeout=20,
@@ -186,7 +200,8 @@ def extract_person(resp: dict) -> dict | None:
 def insert_contact(conn, lien: dict, person: dict) -> None:
     """Insert/update the enriched contact in lien_dbpr_contacts, anchored to its
     lien. On conflict, only overwrite email/phone/full_name when Apollo supplied
-    a (non-null) value — existing data is preserved otherwise."""
+    a (non-null) value — existing data is preserved otherwise. state comes from
+    the lien's county."""
     debtor    = (lien.get("debtor_name") or lien.get("business_name") or "")[:250]
     # full_name carries the matched contact's name (first + last); fall back to
     # the lien's own name when Apollo didn't give one.
@@ -202,7 +217,7 @@ def insert_contact(conn, lien: dict, person: dict) -> None:
             INSERT INTO lien_dbpr_contacts
                 (lien_id, county_id, debtor_name, full_name,
                  email, phone, state, confidence, dbpr_score)
-            VALUES (%s, %s, %s, %s, %s, %s, 'TX', 'medium', 65)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'medium', 65)
             ON CONFLICT (lien_id) DO UPDATE SET
                 email      = COALESCE(EXCLUDED.email,     lien_dbpr_contacts.email),
                 phone      = COALESCE(EXCLUDED.phone,     lien_dbpr_contacts.phone),
@@ -210,24 +225,29 @@ def insert_contact(conn, lien: dict, person: dict) -> None:
                 confidence = EXCLUDED.confidence,
                 dbpr_score = EXCLUDED.dbpr_score
             """,
-            (lien["lien_id"], lien["county_id"], debtor, full_name, email, phone),
+            (lien["lien_id"], lien["county_id"], debtor, full_name,
+             email, phone, lien["state"]),
         )
     conn.commit()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Apollo.io contact enrichment for unmatched TX liens")
+    parser = argparse.ArgumentParser(description="Apollo.io contact enrichment for unmatched TX/AZ/GA liens")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
-                        help=f"Max liens to process (default {DEFAULT_LIMIT}, the free credit grant)")
+                        help=f"Max liens to process across all states (default {DEFAULT_LIMIT})")
+    parser.add_argument("--state", default=None, choices=list(STATE_LOCATIONS.keys()),
+                        help="Limit to one state (TX/AZ/GA). Default: all three")
     parser.add_argument("--dry-run", action="store_true",
                         help="Call Apollo and report, but do not write to the DB")
     args = parser.parse_args()
 
-    limit = max(1, args.limit)
+    limit  = max(1, args.limit)
+    states = [args.state] if args.state else list(STATE_LOCATIONS.keys())
 
     print(f"\n{'='*64}")
-    print(f"  Apollo.io TX Lien Contact Enrichment")
-    print(f"  Limit  : {limit} (highest lien amount first)")
+    print(f"  Apollo.io Multi-State Lien Contact Enrichment")
+    print(f"  States : {', '.join(states)}")
+    print(f"  Limit  : {limit} (highest lien amount first, across states)")
     print(f"  {'DRY RUN — no DB writes' if args.dry_run else 'LIVE — inserting into lien_dbpr_contacts'}")
     print(f"{'='*64}\n")
 
@@ -236,28 +256,34 @@ def main():
         print("     Add APOLLO_API_KEY=... to .env and re-run.")
         sys.exit(1)
 
-    stats = {"searched": 0, "matched": 0, "found_email": 0, "inserted": 0}
+    # Per-state tallies for the summary.
+    by_state = {s: {"searched": 0, "found_email": 0, "inserted": 0} for s in states}
+    total = {"searched": 0, "found_email": 0, "inserted": 0}
 
     conn = get_connection()
     try:
-        liens = get_unmatched_tx_liens(conn, limit)
+        liens = get_unmatched_liens(conn, states, limit)
         if not liens:
-            print("  ✅ No unmatched TX liens to enrich.")
+            print("  ✅ No unmatched liens to enrich.")
             return
 
-        print(f"  {len(liens)} unmatched TX liens to process\n")
+        print(f"  {len(liens)} unmatched liens to process\n")
 
         for i, lien in enumerate(liens):
             query_name = (lien.get("search_name") or "").strip()
-            if not query_name:
+            st = lien["state"]
+            if not query_name or st not in STATE_LOCATIONS:
                 continue
-            debtor = (lien.get("debtor_name") or lien.get("business_name") or "?").strip()
+            debtor   = (lien.get("debtor_name") or lien.get("business_name") or "?").strip()
+            location = STATE_LOCATIONS[st]
 
-            stats["searched"] += 1
-            resp = apollo_people_search(query_name)
+            by_state[st]["searched"] += 1
+            total["searched"] += 1
+            resp = apollo_people_search(query_name, location)
             time.sleep(REQUEST_DELAY)
 
-            prefix = f"  [{i+1}/{len(liens)}] {debtor[:32]:<32} ({lien.get('county_name', '?')}, TX) →"
+            prefix = (f"  [{i+1}/{len(liens)}] [{st}] {debtor[:30]:<30} "
+                      f"({lien.get('county_name', '?')}) →")
 
             if resp is None:
                 print(f"{prefix} request error")
@@ -270,31 +296,34 @@ def main():
                 print(f"{prefix} no match")
                 continue
 
-            stats["matched"] += 1
             matched = person["matched_name"]
             email   = person.get("email")
             conf    = person.get("confidence", 0.0)
 
             if email and conf >= MIN_CONFIDENCE:
-                stats["found_email"] += 1
+                by_state[st]["found_email"] += 1
+                total["found_email"] += 1
                 if args.dry_run:
                     print(f"{prefix} {matched} | {email} (conf {conf:.2f}) [DRY RUN]")
                 else:
                     insert_contact(conn, lien, person)
-                    stats["inserted"] += 1
+                    by_state[st]["inserted"] += 1
+                    total["inserted"] += 1
                     print(f"{prefix} {matched} | ✅ {email} (conf {conf:.2f})")
             elif email:
                 print(f"{prefix} {matched} | skip — low confidence ({conf:.2f})")
             else:
                 print(f"{prefix} {matched} | no email")
 
-        # ── Summary ──
+        # ── Summary (broken down by state) ──
         print(f"\n{'─'*64}")
-        print(f"  Searched     : {stats['searched']}")
-        print(f"  Apollo match : {stats['matched']}")
-        print(f"  Found email  : {stats['found_email']}  (confidence >= {MIN_CONFIDENCE})")
-        print(f"  {'Would insert' if args.dry_run else 'Inserted'}    : "
-              f"{stats['found_email'] if args.dry_run else stats['inserted']}")
+        for st in states:
+            s = by_state[st]
+            print(f"  {st}: searched {s['searched']} / found {s['found_email']} emails")
+        verb = "would insert" if args.dry_run else "inserted"
+        printed = total["found_email"] if args.dry_run else total["inserted"]
+        print(f"  TOTAL: searched {total['searched']} / found {total['found_email']} "
+              f"emails / {verb} {printed}")
         print(f"{'─'*64}\n")
     finally:
         conn.close()
