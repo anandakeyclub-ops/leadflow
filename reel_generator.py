@@ -2679,7 +2679,7 @@ def render_remotion(reel_type: str, context: dict, dry_run: bool = False) -> str
     try:
         result = subprocess.run(["npx","remotion","render",comp_id,str(out_file),
             f"--props={json.dumps(props)}"], cwd=str(REMOTION_PROJECT),
-            capture_output=True, text=True, timeout=300, shell=True)
+            capture_output=True, text=True, timeout=1800, shell=True)
         if result.returncode == 0: print(f"  Done: {out_file}"); return str(out_file)
         print(f"  Failed:\n{result.stderr[-500:]}"); return ""
     except Exception as e: print(f"  Error: {e}"); return ""
