@@ -12,8 +12,9 @@ multi_state_email_enrichment.py (ValueSerp call, junk-email filtering,
 registrable-domain matching, daily quota counters).
 
 Sources, processed per lien in this order:
-  1. SAM.gov registry  — match against a local bulk CSV
-                          (data/raw/sam_gov_entities.csv) if present (free).
+  1. SAM.gov registry  — match against the local entity extract
+                          (data/raw/sam_gov_entities.dat, pipe-delimited; .csv
+                          fallback) if present (free).
   2. BBB scraper        — company-name leads only. Rotating UAs, 2s delay (free).
   3. SerpAPI            — Google Maps for the official website (fast), Google
                           organic as fallback. Capped at 33 calls/day.
@@ -37,7 +38,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
 import re
@@ -72,7 +72,22 @@ SERPAPI_CAP    = 33           # daily call cap (1,000/mo ÷ 30)
 
 DEFAULT_STATES = ["TX", "AZ", "GA"]
 DEFAULT_LIMIT  = 200
+# SAM.gov entity extract: a pipe-delimited .dat (primary), CSV as fallback.
+SAM_DAT        = LEADFLOW_DIR / "data" / "raw" / "sam_gov_entities.dat"
 SAM_CSV        = LEADFLOW_DIR / "data" / "raw" / "sam_gov_entities.csv"
+SAM_NAME_COLS  = ["LEGAL_BUSINESS_NAME", "DBA_NAME"]
+SAM_EMAIL_COLS = ["PHYSICAL_ADDRESS_EMAIL_ADDRESS", "GOVT_BUS_POC_EMAIL",
+                  "ALT_GOVT_BUS_POC_EMAIL", "PAST_PERF_POC_EMAIL"]
+SAM_STATE_COL  = "PHYSICAL_ADDRESS_PROVINCE_OR_STATE"
+
+
+def sam_path():
+    """Return the SAM.gov source file (.dat preferred, .csv fallback), or None."""
+    if SAM_DAT.exists():
+        return SAM_DAT
+    if SAM_CSV.exists():
+        return SAM_CSV
+    return None
 
 OPS_DIR        = LEADFLOW_DIR / "data" / "ops"
 OPS_DIR.mkdir(parents=True, exist_ok=True)
@@ -448,57 +463,87 @@ def serpapi_google(name: str, city: str, state: str) -> dict:
     return out
 
 
-# ── Source 1: SAM.gov federal contractor registry (local CSV) ────────────────────
+# ── Source 1: SAM.gov federal contractor registry (pipe-delimited .dat / CSV) ────
 
 _SAM_INDEX: dict | None = None
 _SAM_LOADED = False
 
 
-def load_sam_csv() -> dict | None:
-    """Load data/raw/sam_gov_entities.csv into {normalized_entity_name: email}.
-    Returns None when the file isn't present. Columns are detected fuzzily so
-    'Entity_Name' / 'PHYSICAL_ADDRESS_EMAIL_ADDRESS' variants all work."""
+def load_sam_index() -> dict | None:
+    """Load the SAM.gov entity extract (pipe-delimited .dat preferred, .csv
+    fallback) into {normalized_business_name: email}. Returns None when no file
+    is present, or {} when the file lacks the expected columns.
+
+    Reads with pandas (sep='|'), tries the known SAM email columns in priority
+    order, indexes both LEGAL_BUSINESS_NAME and DBA_NAME, and pre-filters to the
+    states we enrich (PHYSICAL_ADDRESS_PROVINCE_OR_STATE) to keep the index small."""
     global _SAM_INDEX, _SAM_LOADED
     if _SAM_LOADED:
         return _SAM_INDEX
     _SAM_LOADED = True
-    if not SAM_CSV.exists():
+
+    path = sam_path()
+    if not path:
         _SAM_INDEX = None
         return None
 
-    idx: dict[str, str] = {}
     try:
-        with SAM_CSV.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
-            reader = csv.DictReader(f)
-            headers = reader.fieldnames or []
-
-            def find(*needles):
-                for h in headers:
-                    hl = h.lower().replace(" ", "_")
-                    if all(n in hl for n in needles):
-                        return h
-                return None
-
-            name_col  = find("entity", "name") or find("legal", "business", "name") or find("entity")
-            email_col = find("email")
-            if not name_col or not email_col:
-                _SAM_INDEX = {}
-                return _SAM_INDEX
-            for row in reader:
-                nm = normalize_name(row.get(name_col, ""))
-                em = (row.get(email_col, "") or "").strip().lower()
-                if nm and "@" in em and not is_bad_email(em):
-                    idx.setdefault(nm, em)
-    except Exception:
+        import pandas as pd
+    except ImportError:
+        print("  ⚠ pandas not installed — cannot load SAM.gov file")
         _SAM_INDEX = {}
         return _SAM_INDEX
+
+    try:
+        df = pd.read_csv(path, sep="|", low_memory=False, encoding="utf-8",
+                         on_bad_lines="skip", dtype=str)
+    except Exception as e:
+        print(f"  ⚠ SAM.gov load failed: {e}")
+        _SAM_INDEX = {}
+        return _SAM_INDEX
+
+    cols       = set(df.columns)
+    name_cols  = [c for c in SAM_NAME_COLS if c in cols]
+    email_cols = [c for c in SAM_EMAIL_COLS if c in cols]
+    if not name_cols or not email_cols:
+        print(f"  ⚠ SAM.gov file missing expected name/email columns "
+              f"(found {len(cols)} cols) — skipping SAM matching")
+        _SAM_INDEX = {}
+        return _SAM_INDEX
+
+    keep = name_cols + email_cols
+    if SAM_STATE_COL in cols:
+        keep = keep + [SAM_STATE_COL]
+    sub = df[keep]
+    if SAM_STATE_COL in cols:
+        sub = sub[sub[SAM_STATE_COL].astype(str).str.strip().str.upper().isin(DEFAULT_STATES)]
+
+    idx: dict[str, str] = {}
+    for row in sub.itertuples(index=False, name=None):
+        d = dict(zip(sub.columns, row))
+        em = None
+        for ec in email_cols:
+            v = d.get(ec)
+            if isinstance(v, str) and "@" in v and not is_bad_email(v):
+                em = v.strip().lower()
+                break
+        if not em:
+            continue
+        for nc in name_cols:
+            raw = d.get(nc)
+            if not isinstance(raw, str):
+                continue
+            nm = normalize_name(raw)
+            if nm:
+                idx.setdefault(nm, em)
+
     _SAM_INDEX = idx
     return idx
 
 
 def source_sam_gov(business_name: str) -> dict:
     out = {"email": None, "website": None, "phone": None}
-    idx = load_sam_csv()
+    idx = load_sam_index()
     if idx:
         out["email"] = idx.get(normalize_name(business_name))
     return out
@@ -667,8 +712,8 @@ def main():
     print(f"  {'DRY RUN — no DB writes' if args.dry_run else 'LIVE — inserting into lien_dbpr_contacts'}")
     print(f"{'='*68}\n")
 
-    if "sam" in sources and not SAM_CSV.exists():
-        print(f"  ⚠ SAM.gov bulk CSV not found at {SAM_CSV}")
+    if "sam" in sources and not sam_path():
+        print(f"  ⚠ SAM.gov extract not found ({SAM_DAT.name} or {SAM_CSV.name}) in data/raw/")
         print(f"    Download the entity extract from https://sam.gov/data-services")
         print(f"    and save it there to enable SAM matching (skipped for now).\n")
 
