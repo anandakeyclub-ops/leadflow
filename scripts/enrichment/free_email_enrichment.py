@@ -266,6 +266,43 @@ def is_company_name(name: str) -> bool:
     return bool(BBB_COMPANY_RE.search(name or ""))
 
 
+# Broader company-indicator set used to detect *personal* names. A name with
+# none of these AND a 2-3 word First[/Middle]/Last shape is treated as an
+# individual — individuals must not be searched on SerpAPI/ValueSerp/website
+# (those surface wrong-business emails). They get SAM.gov + BBB only.
+COMPANY_INDICATOR_RE = re.compile(
+    r"\b(LLC|L\.L\.C\.|INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|"
+    r"SERVICES?|CONSTRUCTION|REALTY|ROOFING|HVAC|PLUMBING|ELECTRIC(?:AL)?|"
+    r"GROUP|PROPERTIES|TRUCKING|KING|PC|PA|ENTERPRISES?|HOLDINGS|CONTRACTORS?)\b",
+    re.IGNORECASE)
+
+
+def is_personal_name(name: str) -> bool:
+    """True when the name looks like an individual: no company indicator and a
+    2-3 word First [Middle] Last pattern (initials count as words)."""
+    if not name:
+        return False
+    if COMPANY_INDICATOR_RE.search(name):
+        return False
+    tokens = re.findall(r"[A-Za-z]+", name)
+    return 2 <= len(tokens) <= 3
+
+
+def website_email_acceptable(email: str, business_name: str,
+                             debtor_name: str, scraped_url: str) -> bool:
+    """A website-scraped email is acceptable only if its domain overlaps the
+    business/debtor name (token overlap) OR matches the scraped URL's domain.
+    Zero overlap with both => wrong business, reject (e.g. STAFFORD PENNE W ->
+    visitdallas.com)."""
+    if email_matches_business(email, business_name):
+        return True
+    if debtor_name and email_matches_business(email, debtor_name):
+        return True
+    if email_matches_domain(email, scraped_url):
+        return True
+    return False
+
+
 def normalize_name(name: str) -> str:
     n = (name or "").lower()
     n = re.sub(r"[^a-z0-9 ]", " ", n)
@@ -628,60 +665,80 @@ def insert_contact(conn, lien: dict, email: str, phone: str | None,
 
 def enrich_one(lien: dict, sources: set[str], ua_idx: int) -> dict:
     """Run the active sources in order SAM → BBB → SerpAPI → ValueSerp →
-    Website. Returns {email, phone, source}."""
-    biz   = lien.get("business_name") or lien.get("debtor_name") or ""
-    city  = (lien.get("county_name") or "").replace(" County", "").strip()
-    state = lien["state"]
-    found = {"email": None, "phone": None, "source": ""}
+    Website. Returns {email, phone, source, reason, rejected_email}.
+
+    Personal names are routed to identity-verifying sources only (SAM + BBB);
+    SerpAPI/ValueSerp/website are skipped to avoid wrong-business emails.
+    Website-scraped emails are domain-validated before acceptance."""
+    biz    = lien.get("business_name") or lien.get("debtor_name") or ""
+    debtor = lien.get("debtor_name") or ""
+    name   = lien.get("search_name") or biz
+    city   = (lien.get("county_name") or "").replace(" County", "").strip()
+    state  = lien["state"]
+
+    personal = is_personal_name(name)
+    # Personal names: only SAM + BBB (identity-verifying). Companies: all sources.
+    active = (sources & {"sam", "bbb"}) if personal else set(sources)
+
+    phone = None
     website = None
 
-    # 1) SAM.gov (local CSV).
-    if "sam" in sources:
+    def hit(email, source):
+        return {"email": email, "phone": phone, "source": source,
+                "reason": "ok", "rejected_email": None}
+
+    # 1) SAM.gov (local extract).
+    if "sam" in active:
         s = source_sam_gov(biz)
         if s.get("email"):
-            return {"email": s["email"], "phone": found["phone"], "source": "sam_gov"}
+            return hit(s["email"], "sam_gov")
         website = website or s.get("website")
 
-    # 2) BBB (company-style names only).
-    if "bbb" in sources and is_company_name(biz):
+    # 2) BBB (identity-verifying; runs for individuals too).
+    if "bbb" in active:
         time.sleep(2.0)  # polite
         b = source_bbb(biz, city, state, ua_idx)
-        found["phone"] = found["phone"] or b.get("phone")
+        phone = phone or b.get("phone")
         if b.get("email"):
-            return {"email": b["email"], "phone": found["phone"], "source": "bbb"}
+            return hit(b["email"], "bbb")
         website = website or b.get("website")
 
-    # 3) SerpAPI Google Maps — fast official-website lookup (and email if the
-    #    listing exposes one). Falls back to Google organic only when Maps gives
-    #    us nothing and the cap still allows. Each HTTP call spends one credit.
-    if "serpapi" in sources and SERPAPI_KEY and serpapi_remaining() > 0:
+    # 3) SerpAPI Maps (fast official-website lookup), Google organic fallback.
+    if "serpapi" in active and SERPAPI_KEY and serpapi_remaining() > 0:
         m = serpapi_maps(biz, city, state)
-        found["phone"] = found["phone"] or m.get("phone")
+        phone = phone or m.get("phone")
         if m.get("email"):
-            return {"email": m["email"], "phone": found["phone"], "source": "serpapi"}
+            return hit(m["email"], "serpapi")
         website = website or m.get("website")
         if not website and serpapi_remaining() > 0:
             g = serpapi_google(biz, city, state)
-            found["phone"] = found["phone"] or g.get("phone")
+            phone = phone or g.get("phone")
             if g.get("email"):
-                return {"email": g["email"], "phone": found["phone"], "source": "serpapi"}
+                return hit(g["email"], "serpapi")
             website = website or g.get("website")
 
     # 4) ValueSerp organic (broader email hunt; only while the daily cap allows).
-    if "valueserp" in sources and VALUESERP_KEY and valueserp_remaining() > 0:
+    if "valueserp" in active and VALUESERP_KEY and valueserp_remaining() > 0:
         v = source_valueserp(biz, city, state)
-        found["phone"] = found["phone"] or v.get("phone")
+        phone = phone or v.get("phone")
         if v.get("email"):
-            return {"email": v["email"], "phone": found["phone"], "source": "valueserp"}
+            return hit(v["email"], "valueserp")
         website = website or v.get("website")
 
-    # 5) Website scraper — fired on any URL surfaced above.
-    if "website" in sources and website:
+    # 5) Website scraper — fired on any URL surfaced above, then domain-validated.
+    if "website" in active and website:
         em, ph = scrape_website(website, biz)
+        phone = phone or ph
         if em:
-            return {"email": em, "phone": found["phone"] or ph, "source": "website"}
+            if website_email_acceptable(em, biz, debtor, website):
+                return hit(em, "website")
+            # Domain mismatch — wrong business. Reject, do not insert.
+            return {"email": None, "phone": phone, "source": "website",
+                    "reason": "domain_mismatch", "rejected_email": em}
 
-    return found
+    reason = "personal_name_skip" if personal else "no_email"
+    return {"email": None, "phone": phone, "source": "", "reason": reason,
+            "rejected_email": None}
 
 
 # ── Main ────────────────────────────────────────────────────────────────────────
@@ -728,6 +785,7 @@ def main():
 
     yields = {"sam_gov": 0, "bbb": 0, "serpapi": 0, "valueserp": 0, "website": 0}
     by_state = {s: {"searched": 0, "found": 0} for s in states}
+    rejects = {"domain_mismatch": 0, "personal_name_skip": 0, "no_email": 0}
     enriched = 0
 
     conn = get_connection()
@@ -753,28 +811,39 @@ def main():
             by_state[st]["searched"] += 1
 
             res = enrich_one(lien, sources, ua_idx=i)
-            email, phone, src = res["email"], res["phone"], res["source"]
+            email, phone, src, reason = res["email"], res["phone"], res["source"], res["reason"]
 
             prefix = f"  [{i+1}/{len(leads)}] [{st}] {debtor[:30]:<30} ({lien.get('county_name','?')}) →"
 
             if email and not is_bad_email(email):
+                conf = confidence_for(email, lien.get("business_name") or debtor)
                 by_state[st]["found"] += 1
                 yields[src] = yields.get(src, 0) + 1
+                phone_str = " ☎" + phone if phone else ""
                 if args.dry_run:
-                    conf = confidence_for(email, lien.get("business_name") or debtor)
-                    print(f"{prefix} {email} [{src}/{conf}]{' ☎'+phone if phone else ''} [DRY RUN]")
+                    print(f"{prefix} ✅ KEEP {email} [{src}/{conf}]{phone_str}")
                 else:
-                    conf = insert_contact(conn, lien, email, phone, src)
+                    insert_contact(conn, lien, email, phone, src)
                     enriched += 1
-                    print(f"{prefix} ✅ {email} [{src}/{conf}]{' ☎'+phone if phone else ''}")
+                    print(f"{prefix} ✅ KEEP {email} [{src}/{conf}]{phone_str}")
             else:
-                print(f"{prefix} no email")
+                rejects[reason] = rejects.get(reason, 0) + 1
+                if reason == "domain_mismatch":
+                    rej = res.get("rejected_email") or ""
+                    print(f"{prefix} ❌ REJECT {rej} — domain_mismatch (no overlap with business or site)")
+                elif reason == "personal_name_skip":
+                    print(f"{prefix} ❌ REJECT — personal_name_skip (search sources skipped)")
+                else:
+                    print(f"{prefix} ❌ REJECT — no_email")
 
         # ── Summary ──
         print(f"\n{'─'*68}")
         for st in states:
             s = by_state[st]
             print(f"  {st}: searched {s['searched']} / found {s['found']} emails")
+        print(f"  Rejected: {rejects['domain_mismatch']} domain_mismatch | "
+              f"{rejects['personal_name_skip']} personal_name_skip | "
+              f"{rejects['no_email']} no_email")
         shown = sum(by_state[s]["found"] for s in states) if args.dry_run else enriched
         print(f"\n  Enriched {shown} new emails today | "
               f"SAM: {yields['sam_gov']} | BBB: {yields['bbb']} | "
@@ -797,6 +866,8 @@ def main():
                 "website_yield":   yields["website"],
                 "serpapi_used":    serpapi_used(),
                 "valueserp_used":  valueserp_used(),
+                "rejected_domain_mismatch": rejects["domain_mismatch"],
+                "personal_name_skips":      rejects["personal_name_skip"],
                 "leads_processed": sum(s["searched"] for s in by_state.values()),
             })
     except Exception as e:
