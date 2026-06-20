@@ -28,7 +28,7 @@ SCHEDULE = {
     "data_collection_tx": ["mon", "tue", "wed", "thu", "fri", "sat"],
     "data_collection_ga": ["fri"],
     "data_collection_il": ["fri"],
-    "data_collection_az": [],
+    "data_collection_az": ["mon", "tue", "wed", "thu", "fri", "sat"],
     "lead_scoring":       ["mon", "tue", "wed", "thu", "fri", "sat"],
     "collection_pages":   ["mon", "tue", "wed", "thu", "fri", "sat"],
     "email_enrichment":   ["mon", "tue", "wed", "thu", "fri", "sat"],
@@ -38,6 +38,10 @@ SCHEDULE = {
     "county_lien_intel":  ["sun"],
     "monthly_report":     [1],  # day of month
     "guest_post_outreach":["mon", "tue", "wed", "thu", "fri"],
+    "weekly_scrape":       ["mon", "tue", "wed", "thu", "fri", "sat"],
+    "multi_state_enrichment": ["mon", "wed", "fri"],
+    "tx_contact_enrichment": ["tue", "thu"],
+    "apollo_enrich_tx":    ["mon"],
 }
 
 
@@ -68,3 +72,4 @@ def is_scheduled_today(task_key: str) -> bool:
 def get_todays_schedule() -> dict:
     """Returns dict of task_key -> bool for today."""
     return {k: is_scheduled_today(k) for k in SCHEDULE}
+

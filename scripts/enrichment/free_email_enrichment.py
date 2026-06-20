@@ -625,7 +625,10 @@ def get_leads(conn, states: list[str], limit: int) -> list[dict]:
                     AND d.email IS NOT NULL AND d.email <> ''
               )
             ORDER BY array_position(%s::text[], c.state),
-                     nl.amount DESC NULLS LAST, nl.id
+                       CASE WHEN (nl.business_name IS NOT NULL AND nl.business_name != '') THEN 0
+                            WHEN nl.debtor_name ~* 'LLC|Inc|Corp|Services|Construction|Roofing|HVAC|Trucking|Restaurant|Realty|Group|Properties|Contractors|Holdings|PC\b|PA\b' THEN 0
+                            ELSE 1 END,
+                       nl.amount DESC NULLS LAST, nl.id
             LIMIT %s
             """,
             (states, states, limit),
@@ -903,3 +906,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
