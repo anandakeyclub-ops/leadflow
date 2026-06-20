@@ -42,6 +42,7 @@ SCHEDULE = {
     "multi_state_enrichment": ["mon", "wed", "fri"],
     "tx_contact_enrichment": ["tue", "thu"],
     "apollo_enrich_tx":    ["mon"],
+    "sms_campaign":        ["sat"],
 }
 
 
@@ -72,4 +73,5 @@ def is_scheduled_today(task_key: str) -> bool:
 def get_todays_schedule() -> dict:
     """Returns dict of task_key -> bool for today."""
     return {k: is_scheduled_today(k) for k in SCHEDULE}
+
 
