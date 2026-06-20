@@ -70,7 +70,12 @@ VALUESERP_CAP  = 130          # daily call cap (PAYG cost control)
 SERPAPI_KEY    = os.getenv("SERPAPI_KEY", "")
 SERPAPI_CAP    = 33           # daily call cap (1,000/mo ÷ 30)
 
-DEFAULT_STATES = ["TX", "AZ", "GA"]
+# Processing order matters for credit efficiency: GA and AZ liens skew
+# commercial (LLC/business names that the search sources can enrich), while TX
+# (Dallas) liens are predominantly personal names that get skipped — so spend
+# credits on GA/AZ first, TX last.
+DEFAULT_STATES = ["GA", "AZ", "TX"]
+SUPPORTED_STATES = {"TX", "AZ", "GA"}
 DEFAULT_LIMIT  = 200
 # SAM.gov entity extract: a pipe-delimited .dat (primary), CSV as fallback.
 SAM_DAT        = LEADFLOW_DIR / "data" / "raw" / "sam_gov_entities.dat"
@@ -596,7 +601,8 @@ def ensure_source_column(conn):
 
 def get_leads(conn, states: list[str], limit: int) -> list[dict]:
     """Unmatched liens (no lien_dbpr_contacts row with an email) in the given
-    states, highest amount first."""
+    states. Ordered by state priority (the order of `states`), then highest
+    amount first — so within the limit, earlier states get the credits."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -618,10 +624,11 @@ def get_leads(conn, states: list[str], limit: int) -> list[dict]:
                   WHERE d.lien_id = nl.id
                     AND d.email IS NOT NULL AND d.email <> ''
               )
-            ORDER BY nl.amount DESC NULLS LAST, nl.id
+            ORDER BY array_position(%s::text[], c.state),
+                     nl.amount DESC NULLS LAST, nl.id
             LIMIT %s
             """,
-            (states, limit),
+            (states, states, limit),
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -747,6 +754,9 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-source email enrichment (TX/AZ/GA)")
     parser.add_argument("--dry-run", action="store_true", help="Show matches, don't insert")
     parser.add_argument("--state", choices=["TX", "AZ", "GA"], help="Limit to one state")
+    parser.add_argument("--state-order", default=None,
+                        help="Override processing order, comma-separated "
+                             f"(default {','.join(DEFAULT_STATES)})")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Max leads (default 200)")
     parser.add_argument("--source", choices=["sam", "bbb", "serpapi", "valueserp", "website"],
                         help="Run only one source")
@@ -758,7 +768,18 @@ def main():
         return
 
     sources = {args.source} if args.source else {"sam", "bbb", "serpapi", "valueserp", "website"}
-    states  = [args.state] if args.state else DEFAULT_STATES
+
+    # State processing order: --state (single) wins, else --state-order, else default.
+    if args.state:
+        states = [args.state]
+    elif args.state_order:
+        states = [s.strip().upper() for s in args.state_order.split(",") if s.strip()]
+        bad = [s for s in states if s not in SUPPORTED_STATES]
+        if bad or not states:
+            parser.error(f"--state-order must be a comma-separated subset of "
+                         f"{','.join(sorted(SUPPORTED_STATES))} (got: {args.state_order})")
+    else:
+        states = DEFAULT_STATES
     limit   = max(1, args.limit)
 
     print(f"\n{'='*68}")
