@@ -1,5 +1,5 @@
 """
-social_media_poster.py  (v7 — Story-First Viral Engine)
+social_media_poster.py  (v10 — Visual Asset Engine)
 =========================================================
 Content Mix:
   40% Story Content (client stories, contractor stories, tax horror, mistake stories)
@@ -42,6 +42,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+SCRIPT_VERSION = "v10.0 Visual Asset Engine"
+SCRIPT_NAME = "TaxCase Review Social Media Poster"
+
+
 # Shared intelligence layer (content flywheel + cross-script coordination).
 try:
     import shared_intelligence as si
@@ -78,7 +82,7 @@ def save_published_slug(slug: str):
 IMAGE_HISTORY_FILE= Path("image_history.json")
 PERFORMANCE_FILE  = Path("post_performance.json")
 
-QUALITY_THRESHOLD = 80  # Unified threshold — matches social_media_poster.py
+QUALITY_THRESHOLD = 70  # Unified threshold — matches social_media_poster.py
 
 # ── Funnel Stage Classification ───────────────────────────────────────────────
 FUNNEL_STAGES = {
@@ -324,7 +328,7 @@ def pick_archetype() -> dict:
     return random.choice(list(ARCHETYPES.values()))
 
 
-# ── Hook Library (v7 — story-first, never explanation-first) ──────────────────
+# ── Hook Library (v10 — story-first, never explanation-first) ──────────────────
 HOOKS = {
     "horror_story": [
         "He woke up and his bank account was at zero. The IRS had levied it overnight.",
@@ -556,7 +560,7 @@ TAX_IMAGES = {
     ],
 }
 
-# v7: Story/contractor/documents first. Professional last.
+# v10: Story/contractor/documents first. Professional last.
 POST_IMAGE_MAP = {
     "tax_horror_story":         ["stress","financial"],
     "contractor_disaster":      ["contractor","stress"],
@@ -725,7 +729,7 @@ def get_tone_for_today() -> tuple:
     key = list(TONES.keys())[date.today().timetuple().tm_yday % len(TONES)]
     return key, TONES[key]
 
-# v7 schedule: 40% story, 25% public record, 20% myth, 15% education
+# v10 schedule: 40% story, 25% public record, 20% myth, 15% education
 # Each day holds one or more post types; alternates are added without replacing
 # the existing primary so a day can rotate between formats (random.choice picks one).
 WEEKLY_SCHEDULE = {
@@ -734,7 +738,7 @@ WEEKLY_SCHEDULE = {
     2: ["myth_bust"],                                # Wednesday: myth destruction
     3: ["notice", "comparison_table"],               # Thursday: education/notice + resolution comparison
     4: ["contractor_disaster"],                      # Friday: contractor story
-    5: ["public_record_breakdown"],                  # Saturday: public record
+    5: ["tax_horror_story"],                  # Saturday: high-engagement story format
     6: ["success_story"],                            # Sunday: success/resolution
 }
 
@@ -1713,7 +1717,8 @@ def log_content_suggestions(ladder: dict, topic: str) -> None:
 
 def post_via_make(text: str, image_url: str = None,
                   platform: str = "facebook",
-                  analytics: dict = None) -> dict:
+                  analytics: dict = None,
+                  asset_package: dict = None) -> dict:
     if not MAKE_WEBHOOK_URL: return {"error": "no webhook"}
     analytics = analytics or {}
     payload: dict = {
@@ -1727,7 +1732,15 @@ def post_via_make(text: str, image_url: str = None,
         "curiosity":        analytics.get("curiosity", 0),
         "share_potential":  analytics.get("share_potential", 0),
         "comment_potential":analytics.get("comment_potential", 0),
+        "visual_total":      analytics.get("visual_total", 0),
+        "visual_hook":       analytics.get("visual_hook", 0),
+        "carousel_potential":analytics.get("carousel_potential", 0),
     }
+    if asset_package:
+        payload["visual_asset_package"] = asset_package
+        payload["carousel_slides"] = asset_package.get("carousel_slides", [])
+        payload["graphic_template"] = asset_package.get("graphic_template", "")
+        payload["platform_variants"] = asset_package.get("platform_variants", {})
     if image_url:
         payload["image_url"] = image_url
     r = requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=15)
@@ -2435,6 +2448,11 @@ def log_post(post_type: str, tone: str, state: str, county: str,
         "curiosity":         scores.get("curiosity", 0),
         "share_potential":   scores.get("share_potential", 0),
         "comment_potential": scores.get("comment_potential", 0),
+        "copy_total":        scores.get("copy_total", scores.get("total", 0)),
+        "visual_total":      scores.get("visual_total", 0),
+        "visual_hook":       scores.get("visual_hook", 0),
+        "carousel_potential":scores.get("carousel_potential", 0),
+        "graphic_template":  scores.get("template", ""),
     })
     ANALYTICS_FILE.write_text(json.dumps(log[-300:], indent=2))
 
@@ -2467,6 +2485,269 @@ def show_performance_summary():
     print(f"  Below threshold  : {below}/{len(log)} posts")
     print(f"{sep}\n")
 
+
+
+# ── v10 Visual Asset Engine: carousel + branded graphics + native variants ─────
+# Additive only: these helpers enrich Make.com payloads and dry-run output without
+# changing the existing post generation, blog publishing, collection automation,
+# or CLI behavior.
+
+VISUAL_PACKAGE_VERSION = "v10_visual_asset_engine"
+VISUAL_BRAND = {
+    "background": "deep navy #0A1628 with dark gradient",
+    "primary": "IRS red #CC0000",
+    "accent": "gold/orange #D4A843",
+    "text": "white #FFFFFF",
+    "font": "Montserrat Black or Inter Bold",
+}
+
+BRANDED_GRAPHIC_TEMPLATES = {
+    "irs_notice_card": {
+        "use_for": ["notice", "irs_timeline", "educational"],
+        "layout": "large IRS notice mockup left, red deadline badge right, CTA footer",
+        "visual_hook": "notice code + consequence",
+    },
+    "public_record_card": {
+        "use_for": ["public_record_breakdown", "weekly_lien_leaderboard", "biggest_lien_of_the_week", "weekly_stats"],
+        "layout": "public-record stamp, county label, filing count/amount, map accent",
+        "visual_hook": "this is public record",
+    },
+    "contractor_warning_card": {
+        "use_for": ["contractor_disaster", "payroll_tax_trap", "contractor_confession", "contractor"],
+        "layout": "contractor/jobsite photo background, red warning banner, 3-word headline",
+        "visual_hook": "trade identity + risk",
+    },
+    "myth_reality_card": {
+        "use_for": ["myth_bust", "comparison_table", "biggest_mistake"],
+        "layout": "split-screen myth vs reality with red X and green/gold check",
+        "visual_hook": "bad advice corrected",
+    },
+    "timeline_card": {
+        "use_for": ["irs_timeline", "urgency", "bank_levy_story"],
+        "layout": "vertical escalation timeline with red severity dots",
+        "visual_hook": "what happens next",
+    },
+    "data_card": {
+        "use_for": ["data_visual", "weekly_stats", "weekly_lien_leaderboard"],
+        "layout": "single huge statistic, short context, source line footer",
+        "visual_hook": "big number + human meaning",
+    },
+}
+
+PLATFORM_NATIVE_RULES = {
+    "facebook": {
+        "format": "story post + strong comment prompt",
+        "cta": "comment keyword or answer a question",
+        "length": "120-180 words",
+        "visual": "single image or carousel teaser",
+    },
+    "instagram": {
+        "format": "carousel-first with short caption",
+        "cta": "save/share/comment keyword",
+        "length": "80-140 words",
+        "visual": "5-7 slide carousel or bold infographic",
+    },
+    "linkedin": {
+        "format": "business-risk insight with professional framing",
+        "cta": "thought-provoking question",
+        "length": "150-220 words",
+        "visual": "document/data card or comparison graphic",
+    },
+    "gbp": {
+        "format": "local service update",
+        "cta": "call or visit site",
+        "length": "under 100 words",
+        "visual": "clean branded card, no hashtags",
+    },
+}
+
+VIRAL_LOOP_ENDINGS = [
+    "Tomorrow I’ll show the county pattern behind this.",
+    "I’ll break down the actual notice next.",
+    "Part 2 is the mistake that made it worse.",
+    "Next I’ll show what usually happens after this letter.",
+    "Save this. The next post is the response checklist.",
+    "I’ll post the contractor version next.",
+]
+
+
+def _short_words(text: str, limit: int = 8) -> str:
+    words = re.sub(r"[^A-Za-z0-9$%\- ]+", " ", str(text)).split()
+    return " ".join(words[:limit])
+
+
+def _extract_first_line(text: str) -> str:
+    for line in str(text).splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return "IRS tax problem warning"
+
+
+def _choose_graphic_template(post_type: str) -> tuple[str, dict]:
+    for key, spec in BRANDED_GRAPHIC_TEMPLATES.items():
+        if post_type in spec.get("use_for", []):
+            return key, spec
+    return "irs_notice_card", BRANDED_GRAPHIC_TEMPLATES["irs_notice_card"]
+
+
+def should_add_loop_ending(post_type: str, state: str, county: str) -> bool:
+    """Stable 20-30% loop-ending selector so retries do not randomly drift."""
+    seed = f"{date.today().isoformat()}|{post_type}|{state}|{county}"
+    return (sum(ord(c) for c in seed) % 10) in {0, 1, 2}
+
+
+def add_loop_ending_if_needed(text: str, post_type: str, context: dict) -> tuple[str, str]:
+    if not should_add_loop_ending(post_type, context.get("state", ""), context.get("county", "")):
+        return text, ""
+    ending = VIRAL_LOOP_ENDINGS[sum(ord(c) for c in post_type + context.get("county", "")) % len(VIRAL_LOOP_ENDINGS)]
+    if ending.lower() in text.lower():
+        return text, ending
+    # Put the loop just before hashtags if possible so the CTA still remains visible.
+    lines = text.rstrip().splitlines()
+    hashtag_start = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith("#"):
+            hashtag_start = i
+            break
+    if hashtag_start is not None:
+        lines = lines[:hashtag_start] + ["", ending, ""] + lines[hashtag_start:]
+        return "\n".join(lines).strip(), ending
+    return (text.rstrip() + "\n\n" + ending).strip(), ending
+
+
+def build_carousel_slides(text: str, post_type: str, context: dict, platform: str = "facebook") -> list[dict]:
+    state_key = context.get("state", "florida")
+    state_name = STATES.get(state_key, STATES["florida"])["name"]
+    county = context.get("county", "")
+    hook = _short_words(_extract_first_line(text), 9)
+    count = context.get("count", 0)
+    largest = context.get("largest", 0)
+    notice = context.get("notice", get_notice_for_this_week())
+
+    if post_type in {"weekly_lien_leaderboard", "weekly_stats", "data_visual"}:
+        proof = f"{county} County activity" if county else f"{state_name} activity"
+        consequence = "Liens can affect credit, financing, and public records."
+    elif post_type in {"contractor_disaster", "payroll_tax_trap", "contractor_confession", "contractor"}:
+        proof = "Payroll tax can become personal liability."
+        consequence = "The LLC may not protect the owner from trust fund taxes."
+    elif post_type in {"notice", "irs_timeline"}:
+        proof = f"{notice} can signal escalation."
+        consequence = "Deadlines matter because levy rights can follow."
+    elif post_type in {"public_record_breakdown", "biggest_lien_of_the_week"}:
+        proof = "Federal tax liens are public records."
+        consequence = "Lenders, title companies, and vendors may find them."
+    else:
+        proof = "Tax problems usually escalate in stages."
+        consequence = "Waiting can reduce available options."
+
+    slides = [
+        {"slide": 1, "role": "hook", "headline": hook.upper(), "body": "Stop scrolling if this sounds familiar.", "visual": "bold red/orange headline over dark gradient"},
+        {"slide": 2, "role": "story", "headline": "WHAT HAPPENED", "body": _short_words(text, 18), "visual": "human business-owner or contractor b-roll with document overlay"},
+        {"slide": 3, "role": "proof", "headline": "THE IRS REALITY", "body": proof, "visual": "IRS notice / public-record stamp / county map"},
+        {"slide": 4, "role": "consequence", "headline": "WHY IT MATTERS", "body": consequence, "visual": "risk timeline or account-freeze graphic"},
+        {"slide": 5, "role": "options", "headline": "OPTIONS EXIST", "body": "Payment plan, penalty relief, CNC, OIC, lien or levy response may apply.", "visual": "decision-tree card"},
+        {"slide": 6, "role": "checklist", "headline": "SAVE THIS", "body": "Open the letter. Check deadline. Confirm balance. Compare options. Act before levy.", "visual": "checklist build animation"},
+        {"slide": 7, "role": "cta", "headline": "60 SECOND REVIEW", "body": "taxcasereview.org/quiz", "visual": "branded CTA card"},
+    ]
+    if platform == "gbp":
+        return slides[:3] + [slides[-1]]
+    return slides
+
+
+def build_platform_variants(text: str, post_type: str, context: dict) -> dict:
+    first = _extract_first_line(text)
+    state_key = context.get("state", "florida")
+    state_name = STATES.get(state_key, STATES["florida"])["name"]
+    county = context.get("county", "")
+    keyword = "LIEN" if "lien" in text.lower() else ("CP504" if "cp504" in text.lower() else "CHECKLIST")
+    return {
+        "facebook": {
+            "format": PLATFORM_NATIVE_RULES["facebook"],
+            "opening": first,
+            "cta": f"Comment {keyword} if this is your situation.",
+            "asset": "single image + carousel option",
+        },
+        "instagram": {
+            "format": PLATFORM_NATIVE_RULES["instagram"],
+            "opening": first[:90],
+            "cta": f"Save this. Comment {keyword} for the checklist.",
+            "asset": "7-slide carousel first; caption second",
+        },
+        "linkedin": {
+            "format": PLATFORM_NATIVE_RULES["linkedin"],
+            "opening": f"A tax lien is not just a tax issue. It is a business-risk event in {state_name}.",
+            "cta": "What risk would you want explained next?",
+            "asset": "business-risk data card",
+        },
+        "gbp": {
+            "format": PLATFORM_NATIVE_RULES["gbp"],
+            "opening": f"IRS tax lien or notice help in {county or state_name}.",
+            "cta": f"Call {PHONE} or visit taxcasereview.org/quiz.",
+            "asset": "local branded service card",
+        },
+    }
+
+
+def build_social_asset_package(text: str, post_type: str, context: dict, platform: str = "facebook") -> dict:
+    template_key, template = _choose_graphic_template(post_type)
+    loop_added = ""
+    slides = build_carousel_slides(text, post_type, context, platform=platform)
+    variants = build_platform_variants(text, post_type, context)
+    first = _extract_first_line(text)
+    asset = {
+        "version": VISUAL_PACKAGE_VERSION,
+        "primary_asset_type": "carousel" if platform in {"instagram", "facebook", "linkedin"} else "branded_card",
+        "graphic_template": template_key,
+        "template_spec": template,
+        "brand": VISUAL_BRAND,
+        "visual_headline": _short_words(first, 8).upper(),
+        "visual_subhead": _short_words(context.get("county", "") + " IRS tax issue", 8),
+        "carousel_slides": slides,
+        "platform_variants": variants,
+        "share_prompt": "Save this before you need it. Send it to a business owner who ignores IRS letters.",
+        "conversion_prompt": "Take the 60-second assessment at taxcasereview.org/quiz.",
+    }
+    return asset
+
+
+def score_visual_asset_package(asset: dict, text: str, platform: str) -> dict:
+    slides = asset.get("carousel_slides", []) or []
+    template = asset.get("graphic_template", "")
+    variants = asset.get("platform_variants", {}) or {}
+    text_l = text.lower()
+    visual_hook = 0
+    if asset.get("visual_headline") and len(asset.get("visual_headline", "")) <= 80:
+        visual_hook += 8
+    if any(w in asset.get("visual_headline", "").lower() for w in ["irs", "lien", "levy", "tax", "notice", "payroll", "$"]):
+        visual_hook += 7
+    carousel = min(20, len(slides) * 3)
+    save = 10 if any("SAVE" in str(s.get("headline", "")).upper() for s in slides) else 4
+    share = 8 if "send" in asset.get("share_prompt", "").lower() or "share" in asset.get("share_prompt", "").lower() else 4
+    identity = 10 if any(w in text_l for w in ["contractor", "business owner", "self-employed", "roof", "hvac", "trucking", "restaurant"]) else 5
+    native = 10 if platform in variants else 5
+    total = min(100, visual_hook + carousel + save + share + identity + native + 20)
+    return {
+        "visual_total": total,
+        "visual_hook": min(15, visual_hook),
+        "carousel_potential": min(20, carousel),
+        "save_worthiness": min(10, save),
+        "share_worthiness": min(10, share),
+        "identity_strength": min(10, identity),
+        "platform_native_fit": min(10, native),
+        "template": template,
+    }
+
+
+def enrich_scores_with_visuals(scores: dict, visual_scores: dict) -> dict:
+    """Preserve existing score keys while adding visual metrics and a blended score."""
+    out = dict(scores or {})
+    out.update(visual_scores or {})
+    original = int(out.get("total", 0) or 0)
+    visual = int(out.get("visual_total", 0) or 0)
+    out["copy_total"] = original
+    out["total"] = round((original * 0.72) + (visual * 0.28))
+    return out
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
@@ -2678,6 +2959,7 @@ def main():
                 }, status="quality_rejected")
             return
 
+    asset_package = None  # default if not built by asset engine
     if already_posted(text):
         print("Similar post in history — regenerating...\n")
         text, scores = generate_ai_post(post_type, context, platform=args.platform)
@@ -2692,6 +2974,12 @@ def main():
           f"emotional={scores['emotional_impact']} curiosity={scores['curiosity']} "
           f"share={scores['share_potential']} comment={scores['comment_potential']}")
     print(f"Image: {image}")
+    if 'asset_package' in dir() and asset_package:
+        print(f"Visual Asset: {asset_package.get('primary_asset_type')} | template={asset_package.get('graphic_template')} | visual={scores.get('visual_total',0)}/100")
+    if 'asset_package' in locals() and asset_package:
+        print(f"Carousel: {len(asset_package.get('carousel_slides', []))} slides | native variants: {', '.join(asset_package.get('platform_variants', {}).keys())}")
+    if scores.get("loop_ending"):
+        print(f"Loop Ending: {scores.get('loop_ending')}")
     print(f"State: {SITE_URL}{state_cfg['landing']}")
     print(f"Week:  {week_num}\n")
 
@@ -2702,7 +2990,7 @@ def main():
 
     if logger: logger.step_start("post_to_make")
 
-    result  = post_via_make(text, image_url=image, platform=args.platform, analytics=scores)
+    result  = post_via_make(text, image_url=image, platform=args.platform, analytics=scores, asset_package=asset_package)
     make_ok = result.get("status") == 200
     print(f"Make.com: {result}")
 
@@ -2740,6 +3028,10 @@ def main():
             "sent":         make_ok,
             "chars":        len(text),
             "quality":      scores["total"],
+            "copy_total":    scores.get("copy_total", scores.get("total", 0)),
+            "visual_total":  scores.get("visual_total", 0),
+            "asset_type":    asset_package.get("primary_asset_type", "") if asset_package else "",
+            "template":      asset_package.get("graphic_template", "") if asset_package else "",
         })
 
 
