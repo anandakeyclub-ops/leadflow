@@ -612,6 +612,9 @@ def _least_recently_used(history: list) -> str:
     return min(_all_library_images(), key=lambda u: last_pos.get(u, -1))
 
 def get_image_for_post(post_type: str) -> str:
+    def _to_url(img: str) -> str:
+        if img.startswith("http"): return img
+        return f"https://images.unsplash.com/photo-{img}?w=1200&auto=format&fit=crop"
     categories = POST_IMAGE_MAP.get(post_type, ["contractor","stress"])
     history    = load_image_history()
     recent     = set(history)
@@ -620,11 +623,11 @@ def get_image_for_post(post_type: str) -> str:
         fresh = [img for img in pool if img not in recent]
         if fresh:
             chosen = random.choice(fresh)
-            save_image_history(chosen); return chosen
+            save_image_history(chosen); return _to_url(chosen)
     # Mapped categories exhausted — pick the LEAST-RECENTLY-USED image from the
     # FULL library instead of a random repeat from the primary category.
     chosen = _least_recently_used(history)
-    save_image_history(chosen); return chosen
+    save_image_history(chosen); return _to_url(chosen)
 
 def show_image_status():
     """--image-status: per-category counts, <10 flags, and used-recently vs fresh."""
