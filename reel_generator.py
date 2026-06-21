@@ -1008,6 +1008,8 @@ EMOTIONAL_DRIVERS = {
 
 FORMAT_DEFAULTS_BY_TYPE = {
     "tax_horror_story": "true_crime",
+    "irs_agent_story": "documentary",
+    "insider_secret": "diary_of_a_ceo",
     "the_letter_nobody_opened": "true_crime",
     "the_account_freeze": "true_crime",
     "the_call": "true_crime",
@@ -1020,6 +1022,7 @@ FORMAT_DEFAULTS_BY_TYPE = {
     "county_lien_alert": "breaking_news",
     "state_lien_alert": "breaking_news",
     "irs_agent_story": "documentary",
+    "insider_secret":    "diary_of_a_ceo",
     "insider_secret": "diary_of_a_ceo",
     "bad_tax_advice_reaction": "coffeezilla",
     "tax_tiktok_reaction": "reaction",
@@ -1400,7 +1403,9 @@ def score_reel_script(script_data: dict) -> dict:
     if any(x in first_line for x in hard_interrupts): ss += 10
     elif any(x in first_line for x in ["irs", "lien", "notice", "contractor", "$", "tax debt"]): ss += 7
     elif len(first_line) > 28: ss += 5
-    if any(x in full_text for x in ["full screen", "pattern interrupt", "no avatar", "sound hit", "document slams"]): ss += 3
+    # Also scan storyboard editor_notes — visual cue keywords live there, not in spoken script
+    storyboard_text = " ".join(str(row.get("editor_note","")) + " " + str(row.get("visual","")) for row in storyboard).lower()
+    if any(x in full_text or x in storyboard_text for x in ["full screen", "pattern interrupt", "no avatar", "sound hit", "document slams", "red_stamp", "document_slam", "headline_flash", "camera_shake"]): ss += 3
     if "?" in first_line or any(x in first_line for x in ["why", "how", "what happened"]): ss += 2
     ss = min(15, ss)
 
@@ -1711,7 +1716,8 @@ HASHTAGS:
     STORY_STRUCTURE = f"""
 REQUIRED RETENTION STRUCTURE:
 VISUAL DOMINANCE RULE: The avatar supports the story. The visual evidence carries the story. Avatar max 30% primary screen time.
-0-2s  PATTERN INTERRUPT: "{hook_line}" — say this or riff it naturally. FULL SCREEN VISUAL FIRST. No avatar. Scroll stops here.
+0-2s  PATTERN INTERRUPT (MANDATORY): Your SCRIPT must open with EXACTLY this line or a direct riff: "{hook_line}"
+      FULL SCREEN VISUAL FIRST. No avatar. If you change this hook, the reel fails. Scroll stops here or nowhere.
 2-5s  OPEN LOOP: Plant "{open_loop}" — creates irresistible curiosity.
 5-20s STORY: Specific person, specific county, specific dollar amount. NEVER generic.
       Name: {arch_name}. Descriptor: {arch_desc}.
@@ -2242,7 +2248,7 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
             f"{format_block}"
         )
 
-    raw = call_claude(prompts.get(reel_type, prompts["educational"]), max_tokens=4000)
+    raw = call_claude(prompts.get(reel_type, prompts["educational"]), max_tokens=6000)
     print(f"  DEBUG raw length: {len(raw)} chars, first 200: {raw[:200]}")
 
     script   = _extract_section(raw, "SCRIPT")
@@ -2256,9 +2262,15 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
     visual_cues_raw = _extract_section(raw, "VISUAL_CUES")
     parsed_cues     = _parse_visual_cues(visual_cues_raw, visual_cues)
     storyboard_raw  = _extract_section(raw, "VISUAL_STORYBOARD")
-    visual_storyboard = parse_pipe_rows(storyboard_raw, min_rows=6) or base_storyboard
+    _parsed_storyboard = parse_pipe_rows(storyboard_raw, min_rows=6)
+    if _parsed_storyboard:
+        print(f"  ✅ Storyboard: {len(_parsed_storyboard)} scenes parsed from Claude output")
+        visual_storyboard = _parsed_storyboard
+    else:
+        print(f"  ⚠️  Storyboard: Claude output not parsed — using base template ({len(base_storyboard)} scenes)")
+        visual_storyboard = base_storyboard
     # v9: enrich parsed storyboard with motion graphics, camera moves, interrupts, b-roll
-    visual_storyboard = enrich_storyboard(visual_storyboard, reel_type, reel_format_out or reel_format, trade)
+    visual_storyboard = enrich_storyboard(visual_storyboard, reel_type, reel_format_out if 'reel_format_out' in dir() and reel_format_out else reel_format, trade)
     resets_raw      = _extract_section(raw, "RETENTION_RESETS")
     retention_resets = parse_retention_rows(resets_raw) or base_resets
     platform_variants_raw = _extract_section(raw, "PLATFORM_VARIANTS")
@@ -2288,8 +2300,19 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
 
     limit = get_word_limit(length_tier_out if length_tier_out in SCRIPT_LENGTH_TIERS else tier)
     if word_count > limit + 5:
-        print(f"  ✂️  Trimming to {limit} words...")
-        script = " ".join(script.split()[:limit])
+        print(f"  ✂️  Trimming to ~{limit} words (sentence boundary)...")
+        # Trim at sentence boundary to avoid mid-sentence cuts that HeyGen reads aloud
+        sentences = [s.strip() for s in script.replace("\n", " ").split(".") if s.strip()]
+        trimmed, wc = [], 0
+        for sent in sentences:
+            sw = len(sent.split())
+            if wc + sw > limit + 10:
+                break
+            trimmed.append(sent)
+            wc += sw
+        script = ". ".join(trimmed) + ("." if trimmed else "")
+        if not script.strip():
+            script = " ".join(script.split()[:limit])  # last resort
 
     if not yt_title:
         first    = caption.split(".")[0].strip()
@@ -2504,11 +2527,26 @@ DEFAULT_BG_IMAGE = CUE_BG_IMAGES["irs_notice"]
 # Verified royalty-free Pexels video backgrounds (direct CDN, hotlinkable, free
 # license). Sparse on purpose — guessed Pexels URLs 403, so only confirmed-live
 # URLs go here. Set PEXELS_API_KEY for live, theme-matched video on every cue.
+# Verified Pexels vertical video URLs (9:16, 1080x1920, free license)
+# These are confirmed-live CDN URLs — each is a real distinct video
 CUE_BG_VIDEOS = {
-    "irs_notice":    "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
-    "lien_document": "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
-    "public_record": "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
-    "lien_stamp":    "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    # Document/legal scenes — paper, stamps, official records
+    "irs_notice":      "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    "lien_document":   "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    "public_record":   "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    "lien_stamp":      "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
+    # Financial stress — money, accounts, banking
+    "bank_freeze":     "https://videos.pexels.com/video-files/3209828/3209828-hd_1080_1920_25fps.mp4",
+    "debt_overlay":    "https://videos.pexels.com/video-files/3209828/3209828-hd_1080_1920_25fps.mp4",
+    "penalty_ticker":  "https://videos.pexels.com/video-files/3209828/3209828-hd_1080_1920_25fps.mp4",
+    # Contractor/construction — job sites, trucks, crews
+    "contractor_truck":"https://videos.pexels.com/video-files/8191399/8191399-hd_1080_1920_30fps.mp4",
+    # Business/office stress — computers, phones, meetings
+    "dashboard_alert": "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
+    "phone_ring":      "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
+    # Data/maps — charts, analytics, location
+    "heat_map":        "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
+    "county_map":      "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
 }
 
 # Pexels search query per cue — used only when PEXELS_API_KEY is set.
@@ -2613,37 +2651,208 @@ def build_heygen_background(script_data: dict) -> dict:
     return {"type": "color", "value": DEFAULT_BG_COLOR}
 
 
-def submit_heygen_video(script_data: dict) -> dict:
-    if not HEYGEN_API_KEY: raise RuntimeError("HEYGEN_API_KEY not set")
-    if not HEYGEN_AVATAR_ID: raise RuntimeError("HEYGEN_AVATAR_ID not set")
-    background = build_heygen_background(script_data)
-    print(f"  HeyGen bg: {background['type']} "
-          f"({background.get('url', background.get('value',''))[:64]}) "
-          f"from cue '{_first_visual_cue(script_data) or 'none'}'")
 
-    def _generate(bg: dict):
+def clean_script_for_heygen(script: str) -> str:
+    """Remove stage directions and markdown from script before HeyGen TTS.
+    HeyGen reads everything literally — [0-2s — FULL SCREEN] gets spoken aloud."""
+    import re
+    # Remove bracketed stage directions: [0-2s — FULL SCREEN. No avatar.]
+    script = re.sub(r"\*?\[.*?\]\*?", "", script)
+    # Remove markdown bold: **text** → text
+    script = re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", script)
+    # Remove timestamps like "0-2s:" or "Sec 0-2:"
+    script = re.sub(r"(?:Sec\s*)?\d+[-–]\d+s?:\s*", "", script)
+    # Remove director notes in parentheses: (no avatar) (full screen)
+    script = re.sub(r"\((?:no avatar|full screen|avatar off|b-roll|cut to)[^)]*\)", "", script, flags=re.IGNORECASE)
+    # Collapse multiple spaces/newlines
+    script = re.sub(r"\s+", " ", script).strip()
+    return script
+
+
+def _scene_duration(time_str: str, default: int = 5) -> int:
+    """Parse '0-2s', '5-20s' etc -> duration in whole seconds."""
+    try:
+        time_str = time_str.strip().rstrip("s")
+        if "-" in time_str:
+            parts = time_str.split("-")
+            return max(1, int(float(parts[1])) - int(float(parts[0])))
+        return default
+    except Exception:
+        return default
+
+
+def _avatar_enabled(scene: dict) -> bool:
+    """Determine if avatar should appear in this scene based on v9 storyboard flags."""
+    editor = (scene.get("editor_note") or "").lower()
+    visual = (scene.get("visual") or "").lower()
+    time_s = scene.get("time", "")
+    combined = editor + " " + visual
+    no_avatar_phrases = [
+        "no avatar", "full screen", "full-screen", "avatar cap enforced",
+        "data card", "motion graphic", "county map", "heat map",
+        "evidence reveal", "document only", "text only", "avatar replaced",
+    ]
+    if any(p in combined for p in no_avatar_phrases):
+        return False
+    if time_s.strip().startswith("0"):
+        return False
+    return True
+
+
+def _scene_bg_from_visual(scene: dict, idx: int) -> dict:
+    """Map storyboard scene visual description to a HeyGen background.
+    Priority: matched video > matched image > color fallback."""
+    visual  = (scene.get("visual") or scene.get("editor_note") or "").lower()
+    mapping = [
+        (["contractor", "truck", "roofer", "crew", "hvac", "electrician", "plumber", "job site"], "contractor_truck"),
+        (["bank", "freeze", "levy", "account", "frozen", "zero balance"],                          "bank_freeze"),
+        (["lien document", "case file", "evidence", "redacted", "folder"],                         "lien_document"),
+        (["notice", "letter", "mail", "certified", "cp14", "cp503", "cp504"],                     "irs_notice"),
+        (["map", "county", "heat map", "heat_map", "dallas", "maricopa", "fulton", "lien activity"], "heat_map"),
+        (["calendar", "deadline", "clock", "timeline", "countdown"],                               "calendar"),
+        (["penalty", "debt", "balance", "ticking", "counter", "amount"],                           "penalty_ticker"),
+        (["revenue officer", "agent", "irs officer", "desk"],                                      "revenue_officer"),
+        (["dashboard", "alert", "notification", "phone"],                                           "dashboard_alert"),
+        (["checklist", "bullet", "steps", "list"],                                                  "checklist"),
+        (["public record", "stamp", "filed", "courthouse"],                                         "public_record"),
+        (["lien stamp", "federal tax lien stamp"],                                                  "lien_stamp"),
+    ]
+    cue = "irs_notice"
+    for keywords, key in mapping:
+        if any(kw in visual for kw in keywords):
+            cue = key
+            break
+
+    # Try video first (more dynamic than still image)
+    vid = CUE_BG_VIDEOS.get(cue)
+    if vid and _media_url_ok(vid):
+        return {"type": "video", "url": vid, "play_style": "loop", "fit": "cover"}
+
+    img = CUE_BG_IMAGES.get(cue, DEFAULT_BG_IMAGE)
+    if img and _media_url_ok(img):
+        return {"type": "image", "url": img, "fit": "cover"}
+
+    return {"type": "color", "value": DEFAULT_BG_COLOR}
+
+
+def _split_script_across_scenes(script: str, scenes: list) -> list:
+    """Distribute script sentences across avatar scenes proportionally.
+    Non-avatar scenes get silence (.) so HeyGen doesnt reject empty voice."""
+    avatar_idxs = [i for i, s in enumerate(scenes) if _avatar_enabled(s)]
+    if not avatar_idxs:
+        return [script] + ["."] * (len(scenes) - 1)
+
+    # Split into sentences
+    sentences = [s.strip() + "." for s in script.replace("\n", " ").split(".") if s.strip()]
+    assignments = {i: [] for i in avatar_idxs}
+    for j, sent in enumerate(sentences):
+        target = avatar_idxs[j % len(avatar_idxs)]
+        assignments[target].append(sent)
+
+    result = []
+    for i, scene in enumerate(scenes):
+        if i in assignments and assignments[i]:
+            result.append(" ".join(assignments[i]))
+        elif i in assignments:
+            result.append(script[:60] + ".")  # fallback snippet
+        else:
+            result.append(".")  # non-avatar scene — silence placeholder
+    return result
+
+
+def submit_heygen_video(script_data: dict) -> dict:
+    """Submit multi-scene video to HeyGen v2 API.
+
+    Converts the v9 visual storyboard into multiple video_inputs,
+    each with scene-specific backgrounds from the CUE_BG_VIDEOS/IMAGES library.
+    Avatar appears at 55% scale lower-third on speaking scenes.
+    Fully silent non-avatar scenes use background-only inputs.
+    Falls back to single-scene if storyboard empty or HeyGen rejects.
+    """
+    if not HEYGEN_API_KEY:  raise RuntimeError("HEYGEN_API_KEY not set")
+    if not HEYGEN_AVATAR_ID: raise RuntimeError("HEYGEN_AVATAR_ID not set")
+
+    storyboard = script_data.get("visual_storyboard") or []
+    raw_script = script_data.get("script", "")
+    # Always clean stage directions before TTS
+    spoken_script = clean_script_for_heygen(raw_script)
+
+    def _single_scene(reason: str = "") -> dict:
+        if reason:
+            print(f"  ⚠ {reason} — single-scene fallback")
+        bg = build_heygen_background(script_data)
+        print(f"  HeyGen bg: {bg['type']} from cue '{_first_visual_cue(script_data) or 'none'}'")
         payload = {
             "video_inputs": [{"character": {"type":"avatar","avatar_id":HEYGEN_AVATAR_ID,"avatar_style":"normal"},
-                "voice": {"type":"text","input_text":script_data["script"],"voice_id":HEYGEN_VOICE_ID,"speed":1.0},
+                "voice": {"type":"text","input_text":spoken_script or ".",
+                          "voice_id":HEYGEN_VOICE_ID,"speed":1.0},
                 "background": bg}],
-            "dimension": {"width":1080,"height":1920}, "aspect_ratio": "9:16", "caption": True,
+            "dimension": {"width":1080,"height":1920}, "aspect_ratio":"9:16", "caption":True,
         }
-        return requests.post("https://api.heygen.com/v2/video/generate",
+        r2 = requests.post("https://api.heygen.com/v2/video/generate",
             headers={"X-Api-Key":HEYGEN_API_KEY,"Content-Type":"application/json"},
             json=payload, timeout=30)
+        if r2.status_code != 200:
+            raise RuntimeError(f"HeyGen error: {r2.status_code} - {r2.text[:200]}")
+        vid = r2.json().get("data",{}).get("video_id","")
+        print(f"  ✅ HeyGen: {vid} | single-scene | bg={bg['type']}")
+        record_heygen_render(vid, script_data["reel_type"])
+        return {"video_id": vid, "status": "processing"}
 
-    r = _generate(background)
-    # Never let a rejected media background kill the render — retry once on color.
-    if r.status_code != 200 and background["type"] != "color":
-        print(f"  HeyGen rejected {background['type']} bg ({r.status_code}); retrying on color")
-        background = {"type": "color", "value": DEFAULT_BG_COLOR}
-        r = _generate(background)
+    if not storyboard or not isinstance(storyboard, list):
+        return _single_scene("No storyboard parsed")
+
+    # Cap at 8 scenes (HeyGen practical limit for multi-scene)
+    scenes        = storyboard[:8]
+    scene_scripts = _split_script_across_scenes(spoken_script, scenes)
+
+    print(f"  Building {len(scenes)}-scene HeyGen payload...")
+    video_inputs = []
+    for i, (scene, scene_script) in enumerate(zip(scenes, scene_scripts)):
+        use_avatar = _avatar_enabled(scene)
+        bg         = _scene_bg_from_visual(scene, i)
+        words      = len(scene_script.split()) if scene_script != "." else 0
+        print(f"  Scene {i+1}/{len(scenes)}: {scene.get('time','?'):10s} | "
+              f"avatar={str(use_avatar):5s} | bg={bg['type']:5s} | {words}w")
+
+        video_inputs.append({
+            "character": {
+                "type":         "avatar",
+                "avatar_id":    HEYGEN_AVATAR_ID,
+                "avatar_style": "normal",
+                "scale":        0.55 if use_avatar else 0.0,
+                "offset":       {"x": 0.0, "y": 0.25} if use_avatar else {"x": 0.0, "y": 0.0},
+            },
+            "voice": {
+                "type":       "text",
+                "input_text": scene_script if scene_script.strip() else ".",
+                "voice_id":   HEYGEN_VOICE_ID,
+                "speed":      1.05 if use_avatar else 1.0,
+            },
+            "background": bg,
+        })
+
+    payload = {
+        "video_inputs": video_inputs,
+        "dimension":    {"width": 1080, "height": 1920},
+        "aspect_ratio": "9:16",
+        "caption":      True,
+    }
+
+    print(f"  Submitting {len(video_inputs)}-scene payload to HeyGen...")
+    r = requests.post(
+        "https://api.heygen.com/v2/video/generate",
+        headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
+        json=payload, timeout=30,
+    )
     if r.status_code != 200:
-        raise RuntimeError(f"HeyGen error: {r.status_code} - {r.text[:200]}")
-    video_id = r.json().get("data",{}).get("video_id","")
-    print(f"  HeyGen: {video_id} | 1080p | No watermark | bg={background['type']}")
+        return _single_scene(f"Multi-scene rejected ({r.status_code}): {r.text[:100]}")
+
+    video_id = r.json().get("data", {}).get("video_id", "")
+    print(f"  ✅ HeyGen job: {video_id} | {len(video_inputs)} scenes | 1080x1920")
     record_heygen_render(video_id, script_data["reel_type"])
     return {"video_id": video_id, "status": "processing"}
+
 
 def check_heygen_status(video_id: str) -> dict:
     r = requests.get(f"https://api.heygen.com/v1/video_status.get?video_id={video_id}",
@@ -2856,6 +3065,20 @@ def post_reel_via_make(caption: str, hashtags: str,
         print("  MAKE_WEBHOOK_URL not set"); return {"error": "no webhook"}
     caption_full = f"{caption}\n\n{hashtags}" if hashtags else caption
     analytics    = analytics or {}
+    # Audio cue map by reel format — sent to Make.com for sound design
+    AUDIO_BEDS = {
+        "true_crime":    {"music": "dark_tension_underscore", "bpm": 85,  "swell_at": "30s"},
+        "documentary":   {"music": "cinematic_investigation",  "bpm": 90,  "swell_at": "35s"},
+        "breaking_news": {"music": "urgent_news_sting",        "bpm": 120, "swell_at": "5s"},
+        "coffeezilla":   {"music": "lo_fi_investigative",      "bpm": 75,  "swell_at": "20s"},
+        "alex_hormozi":  {"music": "motivational_pulse",       "bpm": 110, "swell_at": "15s"},
+        "documentary":   {"music": "cinematic_investigation",  "bpm": 90,  "swell_at": "30s"},
+        "reaction":      {"music": "comedic_sting_then_serious","bpm": 100, "swell_at": "8s"},
+        "diary_of_a_ceo":{"music": "intimate_piano_underscore","bpm": 70,  "swell_at": "40s"},
+    }
+    reel_fmt    = analytics.get("reel_format", "documentary")
+    audio_cues  = AUDIO_BEDS.get(reel_fmt, AUDIO_BEDS.get("documentary"))
+    audio_cues["volume"] = 0.12  # -18dB under voice
     yt_title     = analytics.get("youtube_title","")
     if not yt_title:
         first    = caption.split(".")[0].strip()
@@ -2908,6 +3131,7 @@ def post_reel_via_make(caption: str, hashtags: str,
     payload = {
         "message": caption_full, "reel": True, "link": QUIZ_URL,
         "video_url": video_url, "video_file": video_file,
+        "audio_cues": audio_cues,
         "youtube_title": yt_title, "youtube_description": yt_desc,
         "youtube_tags": ",".join(all_tags), "youtube_category": "22",
         "youtube_channel": YOUTUBE_CHANNEL,
