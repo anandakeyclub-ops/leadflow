@@ -3,7 +3,7 @@ import Link from "next/link"
 
 export const metadata: Metadata = {
   title: "Manatee County IRS Tax Lien Help | TaxCase Review Florida",
-  description: "IRS tax lien filed in Manatee County? Licensed tax professionals help Bradenton residents resolve federal tax liens. $399 case review. Call (561) 247-0678.",
+  description: "IRS tax lien filed in Manatee County? Licensed tax professionals help Bradenton residents resolve federal tax liens. $399 case review. Call (888) 334-5052.",
   keywords: "Manatee IRS tax lien, Bradenton tax debt help, Manatee County tax lien removal, IRS lien Bradenton Florida",
   openGraph: {
     title: "Manatee County IRS Tax Lien Help | TaxCase Review",
@@ -17,7 +17,7 @@ const schema = {
   "@type": "LocalBusiness",
   "name": "TaxCase Review — Manatee County",
   "url": "https://taxcasereview.org/florida/manatee/irs-tax-lien-help",
-  "telephone": "+15612470678",
+  "telephone": "+18883345052",
   "areaServed": {
     "@type": "AdministrativeArea",
     "name": "Manatee County, Florida"
@@ -108,10 +108,10 @@ export default function ManateePage() {
               See My Options — 60 Seconds
             </Link>
             <a
-              href="tel:+15612470678"
+              href="tel:+18883345052"
               style={{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none", display: "inline-block" }}
             >
-              (561) 247-0678
+              (888) 334-5052
             </a>
           </div>
         </section>

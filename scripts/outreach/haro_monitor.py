@@ -87,7 +87,7 @@ EXPERT_BIO = (
 )
 CONTACT_BLOCK = ("Romy Cruz, Licensed Tax Professional & Former IRS Revenue Officer\n"
                  "TaxCase Review · https://taxcasereview.org\n"
-                 "(561) 247-0678 · romy@taxcasereview.org")
+                 "(888) 334-5052 · romy@taxcasereview.org")
 
 LOG_COLUMNS = ["date", "outlet", "query_summary", "priority_score", "priority",
                "response_drafted", "response_sent", "resulted_in_coverage",

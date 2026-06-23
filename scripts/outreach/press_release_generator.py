@@ -64,7 +64,7 @@ COUNTY_SPIKE_MIN = 100     # ...with at least this many filings (ignore tiny bas
 BUSINESS = {
     "name":    "TaxCase Review",
     "url":     "https://taxcasereview.org",
-    "phone":   "(561) 247-0678",
+    "phone":   "(888) 334-5052",
     "contact": "Romy Cruz",
     "email":   "romy@taxcasereview.org",
 }

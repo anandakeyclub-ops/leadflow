@@ -53,7 +53,7 @@ GSC_TOKEN_FILE     = LEADFLOW_DIR / os.getenv(
     "GSC_TOKEN", "data/credentials/gsc-token.json")
 GSC_SITE_URL       = os.getenv("GSC_SITE_URL", "sc-domain:taxcasereview.org")
 SITE_URL           = "https://taxcasereview.org"
-PHONE              = "(561) 247-0678"
+PHONE              = "(888) 334-5052"
 REPORTS_CONTENT_PATH = "content/reports"
 DATA_OPS           = LEADFLOW_DIR / "data" / "ops"
 DATA_OPS.mkdir(parents=True, exist_ok=True)

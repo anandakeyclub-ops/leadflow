@@ -3,7 +3,7 @@ import Link from "next/link"
 
 export const metadata: Metadata = {
   title: "Palm Beach County IRS Tax Lien Help | TaxCase Review Florida",
-  description: "IRS tax lien filed in Palm Beach County? Licensed tax professionals help West Palm Beach residents resolve federal tax liens. $399 case review. Call (561) 247-0678.",
+  description: "IRS tax lien filed in Palm Beach County? Licensed tax professionals help West Palm Beach residents resolve federal tax liens. $399 case review. Call (888) 334-5052.",
   keywords: "Palm Beach IRS tax lien, West Palm Beach tax debt help, Palm Beach County tax lien removal, IRS lien West Palm Beach Florida",
   openGraph: {
     title: "Palm Beach County IRS Tax Lien Help | TaxCase Review",
@@ -17,7 +17,7 @@ const schema = {
   "@type": "LocalBusiness",
   "name": "TaxCase Review — Palm Beach County",
   "url": "https://taxcasereview.org/florida/palm-beach/irs-tax-lien-help",
-  "telephone": "+15612470678",
+  "telephone": "+18883345052",
   "areaServed": {
     "@type": "AdministrativeArea",
     "name": "Palm Beach County, Florida"
@@ -108,10 +108,10 @@ export default function PalmBeachPage() {
               See My Options — 60 Seconds
             </Link>
             <a
-              href="tel:+15612470678"
+              href="tel:+18883345052"
               style={{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none", display: "inline-block" }}
             >
-              (561) 247-0678
+              (888) 334-5052
             </a>
           </div>
         </section>

@@ -3,7 +3,7 @@ import Link from "next/link"
 
 export const metadata: Metadata = {
   title: "IRS CP504 Notice — Final Warning Before Levy | Act Now | TaxCase Review Florida",
-  description: "CP504 is the IRS Final Notice Before Levy. Bank accounts and wages can be seized within 30 days. Florida tax professionals available for urgent cases. Call (561) 247-0678.",
+  description: "CP504 is the IRS Final Notice Before Levy. Bank accounts and wages can be seized within 30 days. Florida tax professionals available for urgent cases. Call (888) 334-5052.",
 }
 
 const faqSchema = {
@@ -14,7 +14,7 @@ const faqSchema = {
     { "@type": "Question", "name": "Can a tax lien already be filed after CP504?", "acceptedAnswer": { "@type": "Answer", "text": "Yes — the IRS often files a federal tax lien around the same time as CP504. This appears on public record and affects your credit, property, and ability to sell or refinance." } },
     { "@type": "Question", "name": "What is a Collection Due Process hearing?", "acceptedAnswer": { "@type": "Answer", "text": "A CDP hearing is your legal right to appeal IRS collection action. Requesting one within 30 days of CP504 pauses the levy while your case is reviewed. A tax professional can file this request and negotiate on your behalf." } },
     { "@type": "Question", "name": "Will the IRS still accept a payment plan at CP504?", "acceptedAnswer": { "@type": "Answer", "text": "Yes — but you must act immediately. The IRS generally prefers a payment arrangement over costly enforcement. An experienced tax professional can often halt levy action within 24-48 hours by establishing an installment agreement." } },
-    { "@type": "Question", "name": "I received CP504 and I'm terrified — what should I do right now?", "acceptedAnswer": { "@type": "Answer", "text": "Call us directly at (561) 247-0678. We handle CP504 cases regularly and can often halt levy action quickly. The worst thing you can do is wait. Our $399 case review includes same-week response for CP504 situations." } },
+    { "@type": "Question", "name": "I received CP504 and I'm terrified — what should I do right now?", "acceptedAnswer": { "@type": "Answer", "text": "Call us directly at (888) 334-5052. We handle CP504 cases regularly and can often halt levy action quickly. The worst thing you can do is wait. Our $399 case review includes same-week response for CP504 situations." } },
   ]
 }
 
@@ -48,8 +48,8 @@ export default function CP504Page() {
             <Link href="/#quiz" style={{ background: "#D4A843", color: "#0F1B2D", padding: "14px 28px", borderRadius: "4px", fontWeight: "700", fontSize: "15px", textDecoration: "none" }}>
               See My Options Now
             </Link>
-            <a href="tel:+15612470678" style={{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none" }}>
-              (561) 247-0678
+            <a href="tel:+18883345052" style={{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none" }}>
+              (888) 334-5052
             </a>
           </div>
         </section>
@@ -60,7 +60,7 @@ export default function CP504Page() {
             <p style={{ fontSize: "15px", color: "rgba(255,255,255,0.75)", lineHeight: "1.7", marginBottom: "24px" }}>CP504 is the fourth and final notice in the standard IRS collection sequence. Upon issuing CP504, the IRS can immediately seize your state tax refund. After 30 days, they can levy bank accounts, garnish wages, and seize other assets. A federal tax lien is typically filed around this time as well.</p>
             <h2 style={{ fontSize: "20px", fontWeight: "700", marginBottom: "16px" }}>What to Do Now</h2>
             <ol style={{ paddingLeft: "20px", color: "rgba(255,255,255,0.75)", fontSize: "15px" }}>
-              <li style={{ marginBottom: "12px", lineHeight: "1.6" }}>Call a tax professional TODAY — (561) 247-0678 (urgent cases prioritized)</li>
+              <li style={{ marginBottom: "12px", lineHeight: "1.6" }}>Call a tax professional TODAY — (888) 334-5052 (urgent cases prioritized)</li>
               <li style={{ marginBottom: "12px", lineHeight: "1.6" }}>Request a Collection Due Process hearing within 30 days to pause levy action</li>
               <li style={{ marginBottom: "12px", lineHeight: "1.6" }}>Do NOT withdraw money from bank accounts — this can trigger faster action</li>
               <li style={{ marginBottom: "12px", lineHeight: "1.6" }}>Gather your most recent tax returns, IRS notices, and financial documents</li>
@@ -99,7 +99,7 @@ export default function CP504Page() {
             </div>
             <div style={{ borderBottom: "0.5px solid rgba(255,255,255,0.1)", paddingBottom: "24px", marginBottom: "24px" }}>
               <h3 style={{ fontSize: "16px", fontWeight: "600", marginBottom: "10px", color: "#fff" }}>I received CP504 and I'm terrified — what should I do right now?</h3>
-              <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", lineHeight: "1.7" }}>Call us directly at (561) 247-0678. We handle CP504 cases regularly and can often halt levy action quickly. The worst thing you can do is wait. Our $399 case review includes same-week response for CP504 situations.</p>
+              <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", lineHeight: "1.7" }}>Call us directly at (888) 334-5052. We handle CP504 cases regularly and can often halt levy action quickly. The worst thing you can do is wait. Our $399 case review includes same-week response for CP504 situations.</p>
             </div>
         </section>
 

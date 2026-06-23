@@ -44,7 +44,7 @@ GITHUB_REPO       = os.getenv("GITHUB_REPO",
                               "anandakeyclub-ops/v0-tax-resolution-landing-page")
 GITHUB_BRANCH     = os.getenv("GITHUB_BRANCH", "main")
 SITE_URL          = "https://taxcasereview.org"
-PHONE             = "(561) 247-0678"
+PHONE             = "(888) 334-5052"
 DATA_OPS          = LEADFLOW_DIR / "data" / "ops"
 DATA_OPS.mkdir(parents=True, exist_ok=True)
 REPORTS_PATH      = "content/reports"

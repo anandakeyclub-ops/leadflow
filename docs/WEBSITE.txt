@@ -53,7 +53,7 @@ json{
     "@type": "Organization",
     "name": "TaxCase Review",
     "url": "https://taxcasereview.org",
-    "telephone": "+15612470678",
+    "telephone": "+18883345052",
     "email": "info@taxcasereview.org",
     "foundingDate": "2024",
     "areaServed": ["FL","TX","CA","NY","GA","AZ","NC","IL","OH","PA"],

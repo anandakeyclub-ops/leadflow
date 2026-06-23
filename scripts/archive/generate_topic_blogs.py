@@ -19,7 +19,7 @@ GITHUB_REPO       = os.getenv("GITHUB_REPO", "anandakeyclub-ops/v0-tax-resolutio
 GITHUB_BRANCH     = os.getenv("GITHUB_BRANCH", "main")
 
 SITE_URL  = "https://taxcasereview.org"
-PHONE     = "(561) 247-0678"
+PHONE     = "(888) 334-5052"
 TODAY     = date.today().isoformat()
 
 # ── Writing instructions injected into every prompt ──────────────────────────
@@ -258,7 +258,7 @@ def make_posts():
             "slug": "irs-froze-bank-account-what-to-do",
             "title": "IRS Froze My Bank Account: What to Do in the Next 21 Days",
             "keyword": "IRS froze my bank account",
-            "meta": "Former IRS officer explains exactly what to do when the IRS freezes your bank account. You have 21 days. Here is what to do right now. Call (561) 247-0678.",
+            "meta": "Former IRS officer explains exactly what to do when the IRS freezes your bank account. You have 21 days. Here is what to do right now. Call (888) 334-5052.",
             "prompt": (
                 "Write a 950-word URGENT blog post for TaxCase Review targeting 'IRS froze my bank account'.\n"
                 "You are Romy, a former IRS revenue officer.\n"
@@ -271,7 +271,7 @@ def make_posts():
                 "5) Reasons the IRS will release a levy (table format)\n"
                 "6) What happens if you do nothing - the money transfer timeline\n"
                 "7) The 3 fastest resolution paths ranked by speed\n"
-                "Make the phone number (561) 247-0678 appear prominently twice.\n"
+                "Make the phone number (888) 334-5052 appear prominently twice.\n"
                 "One human story: a trucking company owner who got his $28,000 bank levy released in 4 days.\n"
             ) + WRITING_RULES,
         },
@@ -298,7 +298,7 @@ def make_posts():
             "slug": "irs-payment-plan-rejected",
             "title": "IRS Payment Plan Rejected: Why It Happens and What to Do Next",
             "keyword": "IRS payment plan rejected",
-            "meta": "Former IRS officer explains why the IRS rejects payment plans and exactly what to do next. Free case review at taxcasereview.org or call (561) 247-0678.",
+            "meta": "Former IRS officer explains why the IRS rejects payment plans and exactly what to do next. Free case review at taxcasereview.org or call (888) 334-5052.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'IRS payment plan rejected'.\n"
                 "You are Romy, a former IRS revenue officer.\n"

@@ -61,7 +61,7 @@ GITHUB_REPO       = os.getenv("GITHUB_REPO", "anandakeyclub-ops/v0-tax-resolutio
 GITHUB_BRANCH     = os.getenv("GITHUB_BRANCH", "main")
 
 SITE_URL     = "https://taxcasereview.org"
-PHONE        = "(561) 247-0678"
+PHONE        = "(888) 334-5052"
 INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"  # same key as run_daily_blog.py
 TODAY        = date.today()
 

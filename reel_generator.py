@@ -68,7 +68,7 @@ REMOTION_PROJECT  = Path(os.getenv("REMOTION_PROJECT", r"C:\Users\Dana\Desktop\t
 SITE_URL          = "https://taxcasereview.org"
 QUIZ_URL          = "https://taxcasereview.org/quiz"
 YOUTUBE_CHANNEL   = "https://www.youtube.com/channel/UC992GSSCxMoVCJwoGGLRK1g"
-PHONE             = "(561) 247-0678"
+PHONE             = "(888) 334-5052"
 
 REELS_DIR         = Path("reels")
 REEL_LOG_FILE     = Path("reel_log.json")

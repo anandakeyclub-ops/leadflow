@@ -48,8 +48,8 @@ export default function CP503Page() {
             <Link href="/#quiz" style={{ background: "#D4A843", color: "#0F1B2D", padding: "14px 28px", borderRadius: "4px", fontWeight: "700", fontSize: "15px", textDecoration: "none" }}>
               See My Options Now
             </Link>
-            <a href="tel:+15612470678" style={{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none" }}>
-              (561) 247-0678
+            <a href="tel:+18883345052" style={{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none" }}>
+              (888) 334-5052
             </a>
           </div>
         </section>

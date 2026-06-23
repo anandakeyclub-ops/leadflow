@@ -68,13 +68,13 @@ NOTICES = [
         "code": "CP504",
         "slug": "cp504-notice",
         "title": "IRS CP504 Notice — Final Warning Before Levy | Act Now",
-        "meta_desc": "CP504 is the IRS Final Notice Before Levy. Bank accounts and wages can be seized within 30 days. Florida tax professionals available for urgent cases. Call (561) 247-0678.",
+        "meta_desc": "CP504 is the IRS Final Notice Before Levy. Bank accounts and wages can be seized within 30 days. Florida tax professionals available for urgent cases. Call (888) 334-5052.",
         "h1": "IRS CP504 Notice — This Is a Final Warning. Here's What Happens Next.",
         "direct_answer": "A CP504 notice is the IRS's Final Notice of Intent to Levy. This means the IRS now has legal authority to seize your state tax refund immediately and can levy your bank accounts and garnish your wages within 30 days. This is the most urgent IRS notice — action within 24-48 hours is critical.",
         "what_it_is": "CP504 is the fourth and final notice in the standard IRS collection sequence. Upon issuing CP504, the IRS can immediately seize your state tax refund. After 30 days, they can levy bank accounts, garnish wages, and seize other assets. A federal tax lien is typically filed around this time as well.",
         "urgency": "CRITICAL — levy authority is active. Contact a tax professional today.",
         "next_steps": [
-            "Call a tax professional TODAY — (561) 247-0678 (urgent cases prioritized)",
+            "Call a tax professional TODAY — (888) 334-5052 (urgent cases prioritized)",
             "Request a Collection Due Process hearing within 30 days to pause levy action",
             "Do NOT withdraw money from bank accounts — this can trigger faster action",
             "Gather your most recent tax returns, IRS notices, and financial documents",
@@ -85,7 +85,7 @@ NOTICES = [
             ("Can a tax lien already be filed after CP504?", "Yes — the IRS often files a federal tax lien around the same time as CP504. This appears on public record and affects your credit, property, and ability to sell or refinance."),
             ("What is a Collection Due Process hearing?", "A CDP hearing is your legal right to appeal IRS collection action. Requesting one within 30 days of CP504 pauses the levy while your case is reviewed. A tax professional can file this request and negotiate on your behalf."),
             ("Will the IRS still accept a payment plan at CP504?", "Yes — but you must act immediately. The IRS generally prefers a payment arrangement over costly enforcement. An experienced tax professional can often halt levy action within 24-48 hours by establishing an installment agreement."),
-            ("I received CP504 and I'm terrified — what should I do right now?", "Call us directly at (561) 247-0678. We handle CP504 cases regularly and can often halt levy action quickly. The worst thing you can do is wait. Our $399 case review includes same-week response for CP504 situations."),
+            ("I received CP504 and I'm terrified — what should I do right now?", "Call us directly at (888) 334-5052. We handle CP504 cases regularly and can often halt levy action quickly. The worst thing you can do is wait. Our $399 case review includes same-week response for CP504 situations."),
         ],
     },
 ]
@@ -162,8 +162,8 @@ export default function {notice['code']}Page() {{
             <Link href="/#quiz" style={{{{ background: "#D4A843", color: "#0F1B2D", padding: "14px 28px", borderRadius: "4px", fontWeight: "700", fontSize: "15px", textDecoration: "none" }}}}>
               See My Options Now
             </Link>
-            <a href="tel:+15612470678" style={{{{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none" }}}}>
-              (561) 247-0678
+            <a href="tel:+18883345052" style={{{{ border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "14px 24px", borderRadius: "4px", fontSize: "15px", textDecoration: "none" }}}}>
+              (888) 334-5052
             </a>
           </div>
         </section>

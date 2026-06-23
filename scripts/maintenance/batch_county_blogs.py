@@ -36,7 +36,7 @@ GITHUB_REPO       = os.getenv("GITHUB_REPO", "anandakeyclub-ops/taxcasereview-we
 GITHUB_BRANCH     = os.getenv("GITHUB_BRANCH", "master")
 BLOG_CONTENT_PATH = "content/blog"
 SITE_URL          = "https://taxcasereview.org"
-PHONE             = "(561) 247-0678"
+PHONE             = "(888) 334-5052"
 
 # ── State + County data ───────────────────────────────────────────────────────
 

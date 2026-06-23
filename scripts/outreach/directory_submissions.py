@@ -27,7 +27,7 @@ OUT_DIR = BASE_DIR / "data" / "outreach"
 BUSINESS = {
     "name":        "TaxCase Review",
     "url":         "https://taxcasereview.org",
-    "phone":       "(561) 247-0678",
+    "phone":       "(888) 334-5052",
     "email":       "info@taxcasereview.org",
     "contact":     "Romy Cruz, Enrolled Agent",
     "categories":  ["Tax Resolution", "Tax Relief", "IRS Help",
@@ -43,7 +43,7 @@ DESCRIPTIONS = {
     300: ("TaxCase Review helps contractors & small business owners resolve IRS "
           "debt: liens, levies, payroll/941 problems & back taxes. Led by former "
           "IRS officers & licensed tax pros (EA Romy Cruz). Free 60-second risk "
-          "assessment. Serving FL, TX, AZ, GA, NY, IL. Call (561) 247-0678."),
+          "assessment. Serving FL, TX, AZ, GA, NY, IL. Call (888) 334-5052."),
 }
 
 # ── Directory targets ───────────────────────────────────────────────────────────
@@ -387,7 +387,7 @@ import os
 BUSINESS = {
     "name":    "TaxCase Review",
     "url":     "https://taxcasereview.org",
-    "phone":   "+15612470678",
+    "phone":   "+18883345052",
     "email":   "info@taxcasereview.org",
     "primary_category": "Tax Consultant",
 }
