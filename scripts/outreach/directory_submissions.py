@@ -193,7 +193,7 @@ DIRECTORIES = [
      "priority": "low", "requires_account": True, "has_api": False,
      "categories": "n/a",
      "note": "Mentor directory, not a business-listing directory. Only relevant if "
-             "Romy volunteers as a mentor (then she gets a profile). No standard "
+             "Romy volunteers as a mentor (then he gets a profile). No standard "
              "listing path."},
     {"name": "Greater Miami Chamber of Commerce", "group": "SmallBiz",
      "url": "https://www.miamichamber.com",

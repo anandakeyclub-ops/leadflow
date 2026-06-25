@@ -82,7 +82,7 @@ LOW_KEYWORDS = [
 EXPERT_BIO = (
     "Romy Cruz is a licensed tax professional and former IRS Revenue Officer "
     "with over a decade of experience representing contractors and small "
-    "business owners in IRS tax resolution cases. She is the lead advisor at "
+    "business owners in IRS tax resolution cases. He is the lead advisor at "
     "TaxCase Review (taxcasereview.org)."
 )
 CONTACT_BLOCK = ("Romy Cruz, Licensed Tax Professional & Former IRS Revenue Officer\n"
