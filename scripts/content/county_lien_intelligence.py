@@ -284,13 +284,13 @@ Practical implications. What happens if ignored. TFRP risk for trades.
 OIC (14.1% acceptance rate per IRS Data Book FY2025), installment agreement, CNC status, lien withdrawal. Be specific about what each means.
 
 ## How TaxCase Review Tracks {county} Lien Activity
-Our data pipeline pulls from {county} County public records weekly. We tracked {stats['total_liens']} active liens. Former IRS Revenue Officer Romy Cruz reviews cases from this county regularly.
+Our data pipeline pulls from {county} County public records weekly. We tracked {stats['total_liens']} active liens. Enrolled Agent Romy Cruz reviews cases from this county regularly.
 
 End with CTA linking to {SITE_URL}/florida/{county_slug}
 
 Target keyword naturally: '{county} county IRS tax lien help'
 Include disclaimer: 'Data sourced from public county records. Individual situations vary.'
-Voice: Romy Cruz, former IRS Revenue Officer, EA. Direct, warm, authoritative."""
+Voice: Romy Cruz, licensed Enrolled Agent, EA. Direct, warm, authoritative."""
 
 
 def generate_post_body(county: str, stats: dict) -> str:
@@ -322,7 +322,7 @@ def build_markdown(county: str, stats: dict, body: str) -> tuple[str, str]:
     title       = f"{county} County IRS Tax Lien Update — {month_year}"
     description = (
         f"We tracked {stats['total_liens']} active IRS liens in {county} County. "
-        f"Former IRS Revenue Officer Romy Cruz breaks down what the data shows "
+        f"Enrolled Agent Romy Cruz breaks down what the data shows "
         f"and what options remain."
     )
     tags = ["florida", county_slug, "irs-tax-lien", "county-data"]

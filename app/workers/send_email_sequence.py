@@ -348,9 +348,9 @@ SUBJECT_LINES: dict[int, list[str]] = {
         "What the IRS usually does next",
         "Check your risk level",
     ],
-    # Step 5: authority / former IRS officer angle.
+    # Step 5: authority / Enrolled Agent angle.
     5: [
-        "Former IRS officer perspective",
+        "Enrolled Agent perspective",
         "What the IRS usually looks for",
         "A case review can clarify this",
         "The IRS has more than one path",
@@ -665,7 +665,7 @@ Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
     elif step == 5:
         plain = f"""Hi {name},
 
-Former IRS Revenue Officers tend to look at these cases differently.
+Experienced Enrolled Agents tend to look at these cases differently.
 
 The question is not just "how much is owed?"
 
@@ -685,7 +685,7 @@ TaxCase Review | (888) 334-5052
 Unsubscribe: https://taxcasereview.org/unsubscribe?tid={tracking_id}"""
         html_body = f"""
 <p>Hi {name},</p>
-<p>Former IRS Revenue Officers tend to look at these cases differently.</p>
+<p>Experienced Enrolled Agents tend to look at these cases differently.</p>
 <p>The question is not just <em>"how much is owed?"</em></p>
 <p>The better questions are: Are all returns filed? Is the IRS still inside the collection window? Is there ability to pay? Is there a lien, levy threat, or business payroll issue?</p>
 <p>Those answers determine the real options.</p>

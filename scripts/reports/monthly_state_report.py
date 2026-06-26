@@ -526,7 +526,7 @@ Label any estimates as "estimated" or "based on national IRS trends."
 Do NOT invent specific numbers. Use directional language and ranges like
 "typically X-Y%" or "nationally, the IRS files approximately..."."""
 
-    report_md, quality = generate_with_quality_check(f"""You are a former IRS Revenue Officer writing a monthly intelligence briefing for TaxCase Review.
+    report_md, quality = generate_with_quality_check(f"""You are a licensed Enrolled Agent writing a monthly intelligence briefing for TaxCase Review.
 Your reader is a contractor, small business owner, or self-employed professional in {state} who found this report while researching their IRS situation.
 Write like a trusted expert — direct, specific, human. Not like a government document.
 

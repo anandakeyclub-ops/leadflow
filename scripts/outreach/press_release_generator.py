@@ -72,7 +72,7 @@ BUSINESS = {
 BOILERPLATE = (
     "About TaxCase Review: TaxCase Review (taxcasereview.org) provides IRS tax "
     "resolution for contractors and small business owners across Florida, Texas, "
-    "Arizona, Georgia, New York, and Illinois. Staffed by former IRS officers and "
+    "Arizona, Georgia, New York, and Illinois. Staffed by experienced Enrolled Agents and "
     "licensed tax professionals, the firm helps clients resolve federal tax liens, "
     "levies, payroll/941 tax debt, and back taxes through offers in compromise, "
     "installment agreements, penalty abatement, and lien withdrawal."
@@ -225,7 +225,7 @@ REQUIREMENTS — produce a complete press release in markdown, 400-500 words:
 - LEDE: the single key data point in one sentence.
 - BODY: exactly 3 paragraphs — (1) the data and what's happening, (2) what it means for contractors
   and small business owners, (3) what TaxCase Review recommends (specific resolution paths).
-- QUOTE: one quote attributed to "Romy Cruz, licensed tax professional and former IRS officer at TaxCase Review".
+- QUOTE: one quote attributed to "Romy Cruz, licensed tax professional and Enrolled Agent at TaxCase Review".
 - BOILERPLATE: include this verbatim as an "About" paragraph: {BOILERPLATE}
 - CONTACT block: "Romy Cruz · {BUSINESS['email']} · {BUSINESS['phone']}"
 Use only the data provided; do not invent statistics. Where you cite national figures, you may

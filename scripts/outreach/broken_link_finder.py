@@ -234,7 +234,7 @@ def draft_outreach(page_title: str, source_page: str, broken_url: str,
                    anchor: str, repl_url: str, repl_label: str) -> str:
     prompt = f"""Write a brief, professional broken-link outreach email.
 
-From: Romy Cruz, Licensed Tax Professional & former IRS Revenue Officer, TaxCase Review (taxcasereview.org)
+From: Romy Cruz, Licensed Tax Professional & licensed Enrolled Agent, TaxCase Review (taxcasereview.org)
 To: the editor/webmaster of this page: "{page_title}" ({source_page})
 Point out this broken link on their page:
   - broken URL: {broken_url}

@@ -579,7 +579,7 @@ def generate_report_content(liens: dict, gsc: dict,
     else:
         feat_data_note = f"Use national IRS enforcement trends for {feat_name}. Label any estimates clearly."
 
-    prompt = f"""You are a former IRS Revenue Officer writing a weekly intelligence briefing for TaxCase Review.
+    prompt = f"""You are a licensed Enrolled Agent writing a weekly intelligence briefing for TaxCase Review.
 Your primary reader is a contractor, small business owner, or self-employed professional who may have received an IRS notice.
 Write like a trusted insider — calm, specific, useful. Not like a legal disclaimer.
 
@@ -672,7 +672,7 @@ RULES:
     # Social snippets
     social_raw = call_claude(f"""You are writing social posts for TaxCase Review from real public lien data.
 Your audience: Florida contractors, self-employed workers, small business owners who may have IRS problems.
-Write like a person who has worked inside the IRS and wants to genuinely help.
+Write like a person who has handled IRS collection cases and wants to genuinely help.
 
 DATA THIS WEEK ({data_label}):
 - {liens['new_this_week']} new IRS federal tax liens filed in Florida

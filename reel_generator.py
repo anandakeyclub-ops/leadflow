@@ -531,7 +531,7 @@ HOOK_LIBRARY = {
         "If you've been ignoring IRS letters, I want to talk to you directly.",
     ],
     "insider": [
-        "I spent 12 years as an IRS Revenue Officer. Here's what we never told taxpayers.",
+        "I spent 12 years in IRS tax resolution. Here's what we never told taxpayers.",
         "When I worked for the IRS, this is what happened behind the scenes.",
         "Here's what IRS agents actually talk about in their morning case reviews.",
         "The IRS has a playbook. I know it. Here's what's in it.",
@@ -1610,13 +1610,13 @@ def _generate_once(reel_type: str, context: dict) -> dict:
     auth_line = ""
     if use_auth:
         auth_line = random.choice([
-            "When I worked as an IRS Revenue Officer, ",
+            "When I worked in IRS tax resolution, ",
             "After 12 years inside the IRS, here's what I know — ",
-            "I've seen this from both sides of the table. ",
+            "I've seen this from extensive case experience. ",
             "Here's something most taxpayers never hear — ",
         ])
 
-    persona = f"""You are Romy — former IRS Revenue Officer, 12 years. Founder of TaxCase Review.
+    persona = f"""You are Romy — licensed Enrolled Agent, 12 years. Founder of TaxCase Review.
 Voice: direct, warm, former-insider authority. Like Coffeezilla meets a tax attorney.
 FORMAT: {reel_format} — {format_spec['style']}
 PACING: {format_spec['pacing']}
@@ -1846,7 +1846,7 @@ Use a real scenario — {arch_name} did exactly this and it cost them ${debt_amo
 {format_block}""",
 
         "irs_agent_story": f"""{persona}
-Hook: "When I worked as an IRS Revenue Officer, I had a case like this."
+Hook: "When I worked in IRS tax resolution, I had a case like this."
 Week: {week_of}
 {STORY_STRUCTURE}
 [Authority REQUIRED — this IS an IRS agent story]
@@ -3100,8 +3100,8 @@ def post_reel_via_make(caption: str, hashtags: str,
             f"{location_line}{caption}\n\n"
             f"{excerpt}\n\n"
             f"🔗 Free 60-second IRS risk assessment: {QUIZ_URL}\n"
-            f"📞 Talk to a former IRS officer: {PHONE}\n\n"
-            f"TaxCase Review was founded by former IRS Revenue Officers. "
+            f"📞 Talk to an Enrolled Agent: {PHONE}\n\n"
+            f"TaxCase Review was founded by experienced Enrolled Agents. "
             f"We help contractors, business owners, and self-employed professionals "
             f"resolve federal tax liens, payroll tax debt, IRS levies, and wage garnishments.\n\n"
             f"Resolution options: Offer in Compromise · Installment Agreement · "
@@ -3124,7 +3124,7 @@ def post_reel_via_make(caption: str, hashtags: str,
         "IRS tax lien", "federal tax lien", "tax resolution", "IRS help",
         "tax debt help", "tax relief", "offer in compromise",
         "payroll tax debt", "IRS notice", "penalty abatement",
-        "former IRS officer", "TaxCase Review",
+        "Enrolled Agent", "TaxCase Review",
     ] + location_tags
     all_tags  = list(dict.fromkeys(base_tags + tag_list))[:30]
     vs = analytics.get("viral_scores", {})

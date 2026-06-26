@@ -509,7 +509,7 @@ STEP_LABELS = {
     2: "Common misunderstanding",
     3: "Lien vs levy / options",
     4: "What happens if ignored",
-    5: "Former IRS officer insight",
+    5: "Enrolled Agent insight",
     6: "IRS collection timeline",
     7: "Final follow-up",
 }

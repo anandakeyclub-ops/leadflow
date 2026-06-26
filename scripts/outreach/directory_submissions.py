@@ -39,7 +39,7 @@ BUSINESS = {
 DESCRIPTIONS = {
     50: "IRS tax resolution for contractors & businesses.",
     150: ("IRS tax resolution for contractors & small business owners. "
-          "Former IRS officers & licensed tax pros. Serving FL, TX, AZ, GA, NY, IL."),
+          "Experienced Enrolled Agents & licensed tax pros. Serving FL, TX, AZ, GA, NY, IL."),
     300: ("TaxCase Review helps contractors & small business owners resolve IRS "
           "debt: liens, levies, payroll/941 problems & back taxes. Led by former "
           "IRS officers & licensed tax pros (EA Romy Cruz). Free 60-second risk "

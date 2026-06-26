@@ -132,9 +132,9 @@ BLOG_QUALITY_THRESHOLD = int(os.getenv("BLOG_QUALITY_THRESHOLD", "82"))
 COLLECTION_MANIFEST_PATH = "content/collections"
 
 COLLECTION_META = {
-    "irs-notices": {"path": "app/irs-notices/page.tsx", "url": "/irs-notices", "title": "IRS Notices Help", "description": "Plain-English guides to CP14, CP503, CP504, LT11 and other IRS notices from former IRS officers.", "h1": "IRS Notice Help", "quick": "IRS notices usually mean the collection clock has started. The right response depends on the notice code, deadline, balance due, and whether the IRS has already threatened levy or lien action."},
+    "irs-notices": {"path": "app/irs-notices/page.tsx", "url": "/irs-notices", "title": "IRS Notices Help", "description": "Plain-English guides to CP14, CP503, CP504, LT11 and other IRS notices from experienced Enrolled Agents.", "h1": "IRS Notice Help", "quick": "IRS notices usually mean the collection clock has started. The right response depends on the notice code, deadline, balance due, and whether the IRS has already threatened levy or lien action."},
     "irs-liens": {"path": "app/irs-liens/page.tsx", "url": "/irs-liens", "title": "IRS Tax Lien Help", "description": "Federal tax lien guides, public record explanations, withdrawal options, discharge, subordination and next steps.", "h1": "IRS Tax Lien Help", "quick": "A federal tax lien is the IRS claim against property after tax debt is assessed and unpaid. It can affect financing, real estate, business credit, and public record visibility."},
-    "irs-levies": {"path": "app/irs-levies/page.tsx", "url": "/irs-levies", "title": "IRS Levy Help", "description": "Bank levy, wage garnishment and account seizure guidance from former IRS officers.", "h1": "IRS Levy Help", "quick": "An IRS levy is a seizure action, not just a warning. Bank levies, wage garnishments, and receivable levies require fast response because deadlines and release options are time-sensitive."},
+    "irs-levies": {"path": "app/irs-levies/page.tsx", "url": "/irs-levies", "title": "IRS Levy Help", "description": "Bank levy, wage garnishment and account seizure guidance from experienced Enrolled Agents.", "h1": "IRS Levy Help", "quick": "An IRS levy is a seizure action, not just a warning. Bank levies, wage garnishments, and receivable levies require fast response because deadlines and release options are time-sensitive."},
     "payroll-tax": {"path": "app/payroll-tax/page.tsx", "url": "/payroll-tax", "title": "Payroll Tax Debt Help", "description": "Payroll tax debt, Form 941, trust fund recovery penalty and business-owner personal liability guidance.", "h1": "Payroll Tax Debt Help", "quick": "Payroll tax debt is one of the highest-risk IRS problems because trust fund taxes can create personal liability for owners, officers, or responsible persons."},
     "offer-in-compromise": {"path": "app/offer-in-compromise/page.tsx", "url": "/offer-in-compromise", "title": "Offer in Compromise Help", "description": "Offer in Compromise eligibility, risks, alternatives and realistic qualification guidance.", "h1": "Offer in Compromise Help", "quick": "An Offer in Compromise may settle IRS debt for less than the full balance, but only when financial analysis supports it. Many taxpayers need a different resolution path."},
     "penalty-abatement": {"path": "app/penalty-abatement/page.tsx", "url": "/penalty-abatement", "title": "IRS Penalty Abatement Help", "description": "Penalty abatement, reasonable cause, first-time abatement and penalty relief guidance.", "h1": "IRS Penalty Abatement Help", "quick": "Penalty abatement can reduce IRS balances when the taxpayer qualifies for first-time abatement or reasonable cause relief. The best argument depends on filing history and facts."},
@@ -389,11 +389,11 @@ HOOKS = {
         "We track lien filings across 10 states. Here's what we're seeing this week.",
     ],
     "insider": [
-        "I spent 12 years as an IRS Revenue Officer. Here's what we never told people.",
+        "I spent 12 years in IRS tax resolution. Here's what we never told people.",
         "When I worked for the IRS, this is what happened behind the scenes.",
         "Here's what IRS agents actually look for — from someone who used to be one.",
         "The IRS has a playbook. I know it. Here's what's in it.",
-        "Former IRS Revenue Officer here. The thing I see most often still surprises me.",
+        "Licensed Enrolled Agent here. The thing I see most often still surprises me.",
         "After 12 years inside the IRS, I can tell you exactly how this ends if you don't act.",
     ],
 }
@@ -660,7 +660,7 @@ TONES = {
     "calm":       "calm and authoritative — like a trusted insider who has seen this a thousand times",
     "direct":     "direct and clear — no sugarcoating, but no panic",
     "empathetic": "deeply empathetic — acknowledging how hard this actually is",
-    "authority":  "former-IRS insider — the kind of knowledge that only comes from the inside",
+    "authority":  "former-IRS insider — the kind of knowledge that only comes in detail",
     "urgent":     "urgent but not fearful — action-oriented, specific, real",
 }
 
@@ -1169,7 +1169,7 @@ def generate_ai_post(post_type: str, context: dict,
     performance_note = get_performance_context()
 
     persona = (
-        f"You are Romy, former IRS Revenue Officer (12 years), now founder of TaxCase Review.\n"
+        f"You are Romy, licensed Enrolled Agent (12 years), now founder of TaxCase Review.\n"
         f"Voice: direct, warm, no-nonsense insider. Like Coffeezilla meets a tax attorney.\n"
         f"NEVER: em dashes, bullet lists, corporate language, \'navigate\', \'crucial\', \'it\'s important to\'.\n"
         f"NEVER begin with explanation. ALWAYS begin with story, emotion, fact, or identity.\n"
@@ -1482,7 +1482,7 @@ End with: "{comment_cta}"
 def generate_content_ladder(blog_title: str, blog_slug: str, state_key: str) -> dict:
     state_cfg = STATES.get(state_key, STATES["florida"])
     blog_url  = f"{SITE_URL}/blog/md/{blog_slug}"
-    prompt    = f"""You are Romy, former IRS officer turned content strategist for TaxCase Review.
+    prompt    = f"""You are Romy, Enrolled Agent turned content strategist for TaxCase Review.
 Blog post: "{blog_title}"
 URL: {blog_url}
 State: {state_cfg["name"]}
@@ -1832,10 +1832,10 @@ def _inject_blog_enhancements(
     article: str, faq_schema: str, howto_schema: str, chart_mdx: str, og_block: str,
     ladder: dict = None
 ) -> str:
-    if og_block and 'authorTitle: "Former IRS Revenue Officers"' in article:
+    if og_block and 'authorTitle: "Experienced Enrolled Agents"' in article:
         article = article.replace(
-            'authorTitle: "Former IRS Revenue Officers"',
-            'authorTitle: "Former IRS Revenue Officers"\n' + og_block
+            'authorTitle: "Experienced Enrolled Agents"',
+            'authorTitle: "Experienced Enrolled Agents"\n' + og_block
         )
     if chart_mdx and "<RiskMeter" in article:
         article = article.replace(
@@ -1888,7 +1888,7 @@ def publish_blog(state_key: str, dry_run: bool = False) -> bool:
         slug  = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")
         print(f"  Deduped to: {topic}")
 
-    prompt    = f"""You are Romy, former IRS Revenue Officer, writing for TaxCase Review.
+    prompt    = f"""You are Romy, licensed Enrolled Agent, writing for TaxCase Review.
 Write a complete, SEO-optimized blog article with embedded MDX components.
 
 TITLE: "{topic}"
@@ -1903,9 +1903,9 @@ MANDATORY STRUCTURE (in this exact order):
 title: "{topic}"
 date: "{today}"
 slug: "{slug}"
-metaDescription: "{topic[:80]} — Former IRS Revenue Officer explains your options. Free case review at taxcasereview.org."
+metaDescription: "{topic[:80]} — Licensed Enrolled Agent explains your options. Free case review at taxcasereview.org."
 author: "TaxCase Review Editorial Team"
-authorTitle: "Former IRS Revenue Officers"
+authorTitle: "Experienced Enrolled Agents"
 ---
 
 <AIRetrievalBlock
@@ -2360,7 +2360,7 @@ def generate_collection_page(trade: str, state_key: str,
     file_path = f"app/{state_key.replace('_','-')}/contractors/{trade}/page.tsx"
     page_url  = f"{SITE_URL}/{state_key.replace('_','-')}/contractors/{trade}"
 
-    prompt = f"""You are Romy, former IRS Revenue Officer, writing for TaxCase Review.
+    prompt = f"""You are Romy, licensed Enrolled Agent, writing for TaxCase Review.
 Generate a complete Next.js page component for a trade+state collection page.
 
 Trade: {trade_label}
@@ -2379,7 +2379,7 @@ The page must:
 
 3. Export metadata:
    title: "{state_name} {trade_label} IRS Tax Help | TaxCase Review"
-   description: "Federal tax lien help for {state_name} {trade_label.lower()}. Former IRS Revenue Officers explain your options. Free case review."
+   description: "Federal tax lien help for {state_name} {trade_label.lower()}. Experienced Enrolled Agents explain your options. Free case review."
 
 4. Page sections in order:
    - H1: "{state_name} {trade_label}: IRS Tax Lien Help"
@@ -3122,7 +3122,7 @@ def _build_collection_page_tsx(collection_key: str, manifest: dict) -> str:
     title = _tsx_escape(meta.get("title", manifest.get("title", collection_key.replace("-", " ").title())))
     desc = _tsx_escape(meta.get("description", f"TaxCase Review guides for {title}."))
     h1 = _tsx_escape(meta.get("h1", title))
-    quick = _tsx_escape(meta.get("quick", "TaxCase Review explains IRS collection problems in plain English using former IRS officer experience and public-source research."))
+    quick = _tsx_escape(meta.get("quick", "TaxCase Review explains IRS collection problems in plain English using Enrolled Agent experience and public-source research."))
     articles = manifest.get("articles", [])[:24]
     parts = []
     for i, a in enumerate(articles):
@@ -3257,7 +3257,7 @@ def publish_blog(state_key: str, dry_run: bool = False) -> bool:
     today = date.today().isoformat()
     funnel_stage = classify_funnel_stage(topic)
     collections = classify_collection_topics(topic)
-    prompt = f"""You are Romy, former IRS Revenue Officer, writing for TaxCase Review.
+    prompt = f"""You are Romy, licensed Enrolled Agent, writing for TaxCase Review.
 Write a complete, SEO-optimized blog article with embedded MDX components.
 
 TITLE: "{topic}"
@@ -3279,9 +3279,9 @@ MANDATORY STRUCTURE:
 title: "{topic}"
 date: "{today}"
 slug: "{slug}"
-metaDescription: "{topic[:80]} — Former IRS Revenue Officer explains your options. Free case review at taxcasereview.org."
+metaDescription: "{topic[:80]} — Licensed Enrolled Agent explains your options. Free case review at taxcasereview.org."
 author: "TaxCase Review Editorial Team"
-authorTitle: "Former IRS Revenue Officers"
+authorTitle: "Experienced Enrolled Agents"
 funnelStage: "{funnel_stage}"
 collections: "{','.join(collections)}"
 ---

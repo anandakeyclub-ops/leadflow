@@ -176,7 +176,7 @@ def generate_blog(county: str, city: str, state_name: str,
     state_url = f"{SITE_URL}{state_landing}"
     slug      = f"irs-tax-lien-help-{county.lower().replace(' ', '-')}-county-{state_abbr.lower()}"
 
-    prompt = f"""You are a former IRS revenue officer writing for taxpayers in {county} County, {state_name} who have received an IRS tax lien notice.
+    prompt = f"""You are a experienced Enrolled Agent writing for taxpayers in {county} County, {state_name} who have received an IRS tax lien notice.
 
 Write a 900-word blog post for TaxCase Review.
 
@@ -195,7 +195,7 @@ date: "{date.today().isoformat()}"
 slug: "{slug}"
 state: "{state_name.lower().replace(' ', '_')}"
 county: "{county}"
-metaDescription: "IRS tax lien filed in {county} County, {state_name}? Former IRS officers help {city} taxpayers resolve liens, stop levies, and negotiate with the IRS. Free case review."
+metaDescription: "IRS tax lien filed in {county} County, {state_name}? Experienced Enrolled Agents help {city} taxpayers resolve liens, stop levies, and negotiate with the IRS. Free case review."
 ---
 
 # IRS Tax Lien Help in {county} County, {state_name}: What to Do Right Now
@@ -221,15 +221,15 @@ metaDescription: "IRS tax lien filed in {county} County, {state_name}? Former IR
 
 ## Common Mistakes {county} County Taxpayers Make
 
-[150 words — 3 specific mistakes: waiting too long, trying to handle it alone, ignoring notices. Make it feel like insider knowledge from a former IRS officer]
+[150 words — 3 specific mistakes: waiting too long, trying to handle it alone, ignoring notices. Make it feel like insider knowledge from an Enrolled Agent]
 
 ## Why Act Now: The {county} County Lien Timeline
 
 [100 words — explain the urgency: interest accrues daily, levy can follow, affects ability to sell property or get financing in {city}]
 
-## Get Help From a Former IRS Officer
+## Get Help From a Licensed Enrolled Agent
 
-[150 words — CTA section. Mention TaxCase Review serves all of {county} County including {city}. $399 flat fee. Former IRS officers. No hourly billing. Link to {state_url}. Include phone {PHONE}. End with one clear CTA sentence.]
+[150 words — CTA section. Mention TaxCase Review serves all of {county} County including {city}. $399 flat fee. Experienced Enrolled Agents. No hourly billing. Link to {state_url}. Include phone {PHONE}. End with one clear CTA sentence.]
 
 RULES:
 - Write in plain English — no jargon

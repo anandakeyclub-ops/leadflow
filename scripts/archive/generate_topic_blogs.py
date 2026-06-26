@@ -26,7 +26,7 @@ TODAY     = date.today().isoformat()
 
 WRITING_RULES = """
 CRITICAL WRITING RULES — follow every one:
-- Voice: You are Romy, a former IRS revenue officer writing for real taxpayers
+- Voice: You are Romy, a experienced Enrolled Agent writing for real taxpayers
 - Tone: calm, authoritative, human — like a trusted friend who knows the IRS inside out
 - NEVER use: em dashes, bullet walls, "navigate", "crucial", "it's important to note"
 - NEVER sound like AI — vary sentence length, use natural transitions
@@ -163,10 +163,10 @@ def make_posts():
             "slug": "how-long-does-irs-tax-lien-last",
             "title": "How Long Does an IRS Tax Lien Last? (And How to Remove It Faster)",
             "keyword": "how long does IRS tax lien last",
-            "meta": "Former IRS officer explains exactly how long an IRS tax lien lasts, what resets the clock, and how to remove it faster. Free case review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains exactly how long an IRS tax lien lasts, what resets the clock, and how to remove it faster. Free case review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'how long does IRS tax lien last'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) The 10-year Collection Statute Expiration Date (CSED) - what it means in plain English\n"
                 "2) What actions restart or pause the 10-year clock (installment agreements, bankruptcy, OIC, military service, living abroad)\n"
@@ -182,10 +182,10 @@ def make_posts():
             "slug": "irs-tax-lien-on-house",
             "title": "IRS Tax Lien on Your House: What Happens and What You Can Do",
             "keyword": "IRS tax lien on house",
-            "meta": "Former IRS officer explains exactly what happens when the IRS files a tax lien on your house, how it affects selling and refinancing, and your options. Free review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains exactly what happens when the IRS files a tax lien on your house, how it affects selling and refinancing, and your options. Free review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'IRS tax lien on house'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) What a federal tax lien on your house actually means legally\n"
                 "2) Can you sell your house with an IRS lien? Yes, but here is exactly how the closing works\n"
@@ -201,10 +201,10 @@ def make_posts():
             "slug": "irs-fresh-start-program-explained",
             "title": "IRS Fresh Start Program Explained: Who Qualifies and How It Works in 2026",
             "keyword": "IRS Fresh Start program",
-            "meta": "Former IRS officer explains the IRS Fresh Start program, who qualifies in 2026, and how to apply. Real guidance, not generic tax advice. Free review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains the IRS Fresh Start program, who qualifies in 2026, and how to apply. Real guidance, not generic tax advice. Free review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'IRS Fresh Start program 2026'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) What the IRS Fresh Start program actually is - launched 2011, expanded since\n"
                 "2) The 4 components with a comparison table: Streamlined Installment, OIC, Lien Threshold, Penalty Relief\n"
@@ -220,10 +220,10 @@ def make_posts():
             "slug": "irs-penalty-abatement-letter",
             "title": "IRS Penalty Abatement Letter: How to Write One That Actually Works",
             "keyword": "IRS penalty abatement letter",
-            "meta": "Former IRS officer explains exactly how to write an IRS penalty abatement letter that works, what to include, and what not to say. Free review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains exactly how to write an IRS penalty abatement letter that works, what to include, and what not to say. Free review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'IRS penalty abatement letter'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) Two types comparison table: First-Time Penalty Abatement vs Reasonable Cause\n"
                 "2) First-Time Abatement: the 3 qualifications most people don't know they meet\n"
@@ -239,10 +239,10 @@ def make_posts():
             "slug": "how-to-remove-irs-tax-lien-from-credit-report",
             "title": "How to Remove an IRS Tax Lien From Your Credit Report",
             "keyword": "how to remove IRS tax lien from credit report",
-            "meta": "Former IRS officer explains the exact process to remove an IRS tax lien from your credit report, including Form 12277 and the withdrawal process. Free review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains the exact process to remove an IRS tax lien from your credit report, including Form 12277 and the withdrawal process. Free review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'how to remove IRS tax lien from credit report'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) How IRS liens appear in public records (not credit bureaus directly, but they find them)\n"
                 "2) Comparison table: Lien Release vs Lien Withdrawal - the critical difference\n"
@@ -258,10 +258,10 @@ def make_posts():
             "slug": "irs-froze-bank-account-what-to-do",
             "title": "IRS Froze My Bank Account: What to Do in the Next 21 Days",
             "keyword": "IRS froze my bank account",
-            "meta": "Former IRS officer explains exactly what to do when the IRS freezes your bank account. You have 21 days. Here is what to do right now. Call (888) 334-5052.",
+            "meta": "Enrolled Agent explains exactly what to do when the IRS freezes your bank account. You have 21 days. Here is what to do right now. Call (888) 334-5052.",
             "prompt": (
                 "Write a 950-word URGENT blog post for TaxCase Review targeting 'IRS froze my bank account'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Tone: calm urgency. Like a trusted friend who used to work at the IRS calling you immediately.\n"
                 "Cover:\n"
                 "1) What just happened - bank levy explained in 3 sentences\n"
@@ -279,10 +279,10 @@ def make_posts():
             "slug": "trust-fund-recovery-penalty",
             "title": "IRS Trust Fund Recovery Penalty: What Business Owners Must Know",
             "keyword": "trust fund recovery penalty",
-            "meta": "Former IRS officer explains the Trust Fund Recovery Penalty, who is personally liable, and how to fight it. Free case review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains the Trust Fund Recovery Penalty, who is personally liable, and how to fight it. Free case review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'trust fund recovery penalty'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) What the Trust Fund Recovery Penalty is - explain payroll taxes as money held in trust\n"
                 "2) Who is personally liable table: owners, officers, bookkeepers, check signers\n"
@@ -298,10 +298,10 @@ def make_posts():
             "slug": "irs-payment-plan-rejected",
             "title": "IRS Payment Plan Rejected: Why It Happens and What to Do Next",
             "keyword": "IRS payment plan rejected",
-            "meta": "Former IRS officer explains why the IRS rejects payment plans and exactly what to do next. Free case review at taxcasereview.org or call (888) 334-5052.",
+            "meta": "Enrolled Agent explains why the IRS rejects payment plans and exactly what to do next. Free case review at taxcasereview.org or call (888) 334-5052.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'IRS payment plan rejected'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) Top 5 rejection reasons table with percentage of cases each represents\n"
                 "2) Unfiled returns - why this is the #1 reason and how to fix it fast\n"
@@ -317,10 +317,10 @@ def make_posts():
             "slug": "irs-tax-debt-self-employed",
             "title": "Self-Employed and Owe the IRS? Here Is What Actually Happens Next",
             "keyword": "self employed IRS tax debt",
-            "meta": "Former IRS officer explains what the IRS actually does to self-employed taxpayers with tax debt. Real options for contractors, freelancers, and gig workers. Free review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains what the IRS actually does to self-employed taxpayers with tax debt. Real options for contractors, freelancers, and gig workers. Free review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'self employed IRS tax debt'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Write directly to contractors, freelancers, and gig workers.\n"
                 "Cover:\n"
                 "1) Why self-employed people fall behind - the quarterly tax trap with a calendar table\n"
@@ -337,10 +337,10 @@ def make_posts():
             "slug": "irs-tax-lien-on-llc",
             "title": "IRS Tax Lien on Your LLC: What It Means for Your Business and Personal Assets",
             "keyword": "IRS tax lien LLC",
-            "meta": "Former IRS officer explains how IRS tax liens affect LLCs, when personal assets are at risk, and your options. Free case review at taxcasereview.org.",
+            "meta": "Enrolled Agent explains how IRS tax liens affect LLCs, when personal assets are at risk, and your options. Free case review at taxcasereview.org.",
             "prompt": (
                 "Write a 950-word blog post for TaxCase Review targeting 'IRS tax lien LLC'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Cover:\n"
                 "1) How IRS liens attach to LLC assets - equipment, receivables, bank accounts, real property\n"
                 "2) Personal liability comparison table: Single-member LLC vs Multi-member LLC vs S-Corp\n"
@@ -361,10 +361,10 @@ def make_posts():
             "topic_slug":    "irs-tax-lien-help-contractors",
             "topic_title":   "IRS Tax Lien Help for {state} Contractors: What You Need to Know",
             "keyword":       "IRS tax lien help {state} contractors",
-            "meta":          "Former IRS officer explains IRS tax lien help for {state} contractors. Real options for {cities} business owners. Free review at taxcasereview.org.",
+            "meta":          "Enrolled Agent explains IRS tax lien help for {state} contractors. Real options for {cities} business owners. Free review at taxcasereview.org.",
             "prompt_body":   (
                 "Write a 900-word blog post for TaxCase Review targeting 'IRS tax lien help {state} contractors'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Focus specifically on contractors in {state} ({cities}).\n"
                 "Cover:\n"
                 "1) Why {state} contractors specifically face IRS liens - state economy context ({industries})\n"
@@ -382,10 +382,10 @@ def make_posts():
             "topic_slug":    "small-business-irs-debt",
             "topic_title":   "{state} Small Business IRS Debt: Your Real Options in 2026",
             "keyword":       "{state} small business IRS tax debt",
-            "meta":          "Former IRS officer explains real options for {state} small business owners with IRS debt. {cities} businesses. Free review at taxcasereview.org.",
+            "meta":          "Enrolled Agent explains real options for {state} small business owners with IRS debt. {cities} businesses. Free review at taxcasereview.org.",
             "prompt_body":   (
                 "Write a 900-word blog post for TaxCase Review targeting '{state} small business IRS tax debt'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Focus on small business owners in {state} ({cities}).\n"
                 "Cover:\n"
                 "1) The unique IRS challenges facing {state} small businesses in {industries}\n"
@@ -403,10 +403,10 @@ def make_posts():
             "topic_slug":    "irs-levy-wage-garnishment",
             "topic_title":   "IRS Wage Garnishment in {state}: How to Stop It Before It Starts",
             "keyword":       "IRS wage garnishment {state}",
-            "meta":          "Former IRS officer explains how to stop IRS wage garnishment in {state}. {cities} taxpayers. Free review at taxcasereview.org.",
+            "meta":          "Enrolled Agent explains how to stop IRS wage garnishment in {state}. {cities} taxpayers. Free review at taxcasereview.org.",
             "prompt_body":   (
                 "Write a 900-word URGENT blog post for TaxCase Review targeting 'IRS wage garnishment {state}'.\n"
-                "You are Romy, a former IRS revenue officer.\n"
+                "You are Romy, a experienced Enrolled Agent.\n"
                 "Focus on {state} taxpayers in {cities}.\n"
                 "Cover:\n"
                 "1) How IRS wage garnishment works in {state} - what your employer receives\n"

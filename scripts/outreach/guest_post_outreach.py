@@ -68,7 +68,7 @@ _EMAIL_JUNK = ("example.com", "example.org", "domain.com", "yourdomain.com",
                "email.com", "sentry.io", "wixpress.com", "godaddy.com",
                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css")
 
-ROMY_BIO = ("Romy Cruz, Licensed Tax Professional and former IRS Revenue Officer, "
+ROMY_BIO = ("Romy Cruz, Licensed Tax Professional and licensed Enrolled Agent, "
             "lead advisor at TaxCase Review (taxcasereview.org). She represents "
             "contractors and small business owners in IRS tax resolution.")
 
