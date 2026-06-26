@@ -389,12 +389,12 @@ HOOKS = {
         "We track lien filings across 10 states. Here's what we're seeing this week.",
     ],
     "insider": [
-        "I spent 12 years in IRS tax resolution. Here's what we never told people.",
+        "I spent 15 years in IRS tax resolution. Here's what we never told people.",
         "When I worked for the IRS, this is what happened behind the scenes.",
         "Here's what IRS agents actually look for — from someone who used to be one.",
         "The IRS has a playbook. I know it. Here's what's in it.",
         "Licensed Enrolled Agent here. The thing I see most often still surprises me.",
-        "After 12 years inside the IRS, I can tell you exactly how this ends if you don't act.",
+        "After 15 years in IRS tax resolution, I can tell you exactly how this ends if you don't act.",
     ],
 }
 
@@ -928,7 +928,7 @@ def score_content_quality(
     # ── EEAT (10pts) ──────────────────────────────────────────
     eeat = 0
     authority = ["former irs","revenue officer","irs data book","irs.gov",
-                 "12 years","tax resolution expert","romy"]
+                 "15 years","tax resolution expert","romy"]
     if any(a in t for a in authority): eeat += 5
     if "<AuthorBox" in article or "authorTitle" in article: eeat += 3
     if "results vary" in t: eeat += 2
@@ -1169,7 +1169,7 @@ def generate_ai_post(post_type: str, context: dict,
     performance_note = get_performance_context()
 
     persona = (
-        f"You are Romy, licensed Enrolled Agent (12 years), now founder of TaxCase Review.\n"
+        f"You are Romy, licensed Enrolled Agent (15 years), now founder of TaxCase Review.\n"
         f"Voice: direct, warm, no-nonsense insider. Like Coffeezilla meets a tax attorney.\n"
         f"NEVER: em dashes, bullet lists, corporate language, \'navigate\', \'crucial\', \'it\'s important to\'.\n"
         f"NEVER begin with explanation. ALWAYS begin with story, emotion, fact, or identity.\n"

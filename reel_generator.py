@@ -531,7 +531,7 @@ HOOK_LIBRARY = {
         "If you've been ignoring IRS letters, I want to talk to you directly.",
     ],
     "insider": [
-        "I spent 12 years in IRS tax resolution. Here's what we never told taxpayers.",
+        "I spent 15 years in IRS tax resolution. Here's what we never told taxpayers.",
         "When I worked for the IRS, this is what happened behind the scenes.",
         "Here's what IRS agents actually talk about in their morning case reviews.",
         "The IRS has a playbook. I know it. Here's what's in it.",
@@ -1611,12 +1611,12 @@ def _generate_once(reel_type: str, context: dict) -> dict:
     if use_auth:
         auth_line = random.choice([
             "When I worked in IRS tax resolution, ",
-            "After 12 years inside the IRS, here's what I know — ",
+            "After 15 years in IRS tax resolution, here's what I know — ",
             "I've seen this from extensive case experience. ",
             "Here's something most taxpayers never hear — ",
         ])
 
-    persona = f"""You are Romy — licensed Enrolled Agent, 12 years. Founder of TaxCase Review.
+    persona = f"""You are Romy — licensed Enrolled Agent, 15 years. Founder of TaxCase Review.
 Voice: direct, warm, former-insider authority. Like Coffeezilla meets a tax attorney.
 FORMAT: {reel_format} — {format_spec['style']}
 PACING: {format_spec['pacing']}
