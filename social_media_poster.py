@@ -28,6 +28,14 @@ All v6 features preserved. All existing CLI commands preserved.
 """
 from __future__ import annotations
 
+import sys
+# Ensure emoji/Unicode output never crashes under Task Scheduler's cp1252 console.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 import argparse
 import base64
 import json

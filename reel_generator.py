@@ -42,6 +42,14 @@ All v5 features preserved. All existing CLI commands preserved.
 """
 from __future__ import annotations
 
+import sys
+# Ensure emoji/Unicode output never crashes under Task Scheduler's cp1252 console.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 import argparse
 import json
 import os
@@ -3281,9 +3289,18 @@ def main():
     ]
     parser = argparse.ArgumentParser(description="TaxCase Review Reel Generator v8 (Top 1% Visual-First Engine)")
     parser.add_argument("--auto",                action="store_true")
-    parser.add_argument("--remotion",            default=None,
-                        choices=["weekly-stats","county-breakdown","penalty-growth","notice"])
-    parser.add_argument("--heygen",              default=None, choices=ALL_HEYGEN_TYPES)
+    VALID_REMOTION = ["weekly-stats", "county-breakdown", "penalty-growth", "notice",
+                      "public-record", "myth-bust"]
+    VALID_HEYGEN = ["educational", "contractor", "contractor-disaster", "myth-bust",
+                    "data-reveal", "notice", "urgency", "success-story",
+                    "state-spotlight", "payroll-tax-trap", "public-record-breakdown"]
+    # nargs="?" so the flag works bare (--heygen / --remotion -> '__auto__'), with an
+    # explicit type (--heygen educational), or combined with --auto. Never exits with
+    # an argparse usage error on an unknown value.
+    parser.add_argument("--remotion", nargs="?", const="__auto__", default=None,
+                        help="Remotion reel type; bare or with --auto picks a random valid type")
+    parser.add_argument("--heygen", nargs="?", const="__auto__", default=None,
+                        help="HeyGen reel type; bare or with --auto picks a random valid type")
     parser.add_argument("--notice",              default=None, choices=["CP14","CP503","CP504","CP2000"])
     parser.add_argument("--state",               default=None)
     parser.add_argument("--county",              default=None)
@@ -3298,6 +3315,25 @@ def main():
     parser.add_argument("--force",               action="store_true")
     parser.add_argument("--performance-summary", action="store_true")
     args = parser.parse_args()
+
+    # Resolve --heygen / --remotion. Bare flag (nargs const '__auto__') or --auto
+    # picks a random valid type; an unknown explicit value falls back gracefully so
+    # a scheduled invocation never exits with an argparse usage error.
+    if args.heygen == "__auto__" or (args.auto and args.heygen is not None):
+        args.heygen = random.choice(VALID_HEYGEN)
+        print(f"  --heygen auto -> {args.heygen}")
+    elif args.heygen is not None and args.heygen not in ALL_HEYGEN_TYPES:
+        fb = random.choice(VALID_HEYGEN)
+        print(f"  WARN: '{args.heygen}' is not a valid HeyGen type — using '{fb}'")
+        args.heygen = fb
+
+    if args.remotion == "__auto__" or (args.auto and args.remotion is not None):
+        args.remotion = random.choice(VALID_REMOTION)
+        print(f"  --remotion auto -> {args.remotion}")
+    elif args.remotion is not None and args.remotion not in VALID_REMOTION:
+        fb = random.choice(VALID_REMOTION)
+        print(f"  WARN: '{args.remotion}' is not a valid Remotion type — using '{fb}'")
+        args.remotion = fb
 
     REELS_DIR.mkdir(exist_ok=True)
     if args.performance_summary: show_performance_summary(); return
@@ -3315,14 +3351,18 @@ def main():
     print(f"  {'DRY RUN' if args.dry_run else 'LIVE'}")
     print(f"{sep}\n")
 
-    if args.auto:
+    # Explicit --remotion / --heygen win over a bare --auto (which falls back to the
+    # weekday schedule only when no engine was specified).
+    if args.remotion:
+        engine = "remotion"; reel_type = args.remotion.replace("-","_")
+    elif args.heygen:
+        engine = "heygen"; reel_type = args.heygen.replace("-","_")
+    elif args.auto:
         engine, reel_type = get_schedule_for_today()
         if engine is None: print("No reel scheduled today."); return
         print(f"Auto -> {engine.upper()} / {reel_type}\n")
-    elif args.remotion:
-        engine = "remotion"; reel_type = args.remotion.replace("-","_")
     else:
-        engine = "heygen"; reel_type = args.heygen.replace("-","_")
+        parser.print_help(); return
 
     if engine == "heygen" and not args.dry_run:
         ok, msg = can_use_heygen()
