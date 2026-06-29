@@ -22,7 +22,7 @@ SCHEDULE = {
     "email_sends":        ["mon", "tue", "wed", "thu"],
     "social_post":        ["mon", "tue", "wed", "thu", "sat"],
     "reel_heygen":        ["thu", "sun"],
-    "reel_remotion":      ["wed"],
+    "reel_remotion":      ["mon", "tue", "wed", "fri", "sat"],  # Mon public-record, Tue myth-bust, Wed stats, Fri notice, Sat county
     "blog_post":          ["mon", "tue", "wed", "thu", "fri", "sat"],
     "data_collection_fl": ["mon", "tue", "wed", "thu", "fri", "sat"],
     "data_collection_tx": ["mon", "tue", "wed", "thu", "fri", "sat"],
@@ -34,7 +34,7 @@ SCHEDULE = {
     "email_enrichment":   ["mon", "tue", "wed", "thu", "fri", "sat"],
     "free_email_enrichment": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
     "daily_summary":      ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
-    "weekly_intel":       ["sun"],
+    "weekly_intel":       ["mon", "thu"],  # Mon weekly report + Thu enforcement brief
     "county_lien_intel":  ["sun"],
     "monthly_report":     [1],  # day of month
     "guest_post_outreach":["mon", "tue", "wed", "thu", "fri"],
@@ -42,7 +42,7 @@ SCHEDULE = {
     "multi_state_enrichment": ["mon", "wed", "fri"],
     "tx_contact_enrichment": ["tue", "thu"],
     "apollo_enrich_tx":    ["mon"],
-    "sms_campaign":        ["sat"],
+    "sms_campaign":        ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],  # SMS Morning/Midday/Afternoon run daily
 }
 
 
