@@ -1,21 +1,21 @@
 """
-reel_generator.py  (v9 — Coffeezilla + Documentary + Human B-Roll Engine)
+reel_generator.py  (v9 ΓÇö Coffeezilla + Documentary + Human B-Roll Engine)
 ====================================================
-v9 UPGRADES (additive only — zero existing logic removed):
-  1. Avatar Screen-Time Cap — MAX 3 avatar scenes per reel (30% max).
+v9 UPGRADES (additive only ΓÇö zero existing logic removed):
+  1. Avatar Screen-Time Cap ΓÇö MAX 3 avatar scenes per reel (30% max).
      Excess scenes auto-replaced with documentary/b-roll visuals.
-  2. Motion Graphics Library — 10 motion graphic types mapped per reel type,
+  2. Motion Graphics Library ΓÇö 10 motion graphic types mapped per reel type,
      injected as scene["motion_graphic"] on the hook scene.
-  3. Human B-Roll Library — industry-specific human footage descriptions
+  3. Human B-Roll Library ΓÇö industry-specific human footage descriptions
      (contractor, restaurant, trucking, real estate, small business),
      injected as scene["human_broll"] on story scenes.
-  4. Documentary Visual Layer — case files, evidence boards, redacted docs,
-     timeline walls — auto-injected for investigative/documentary reel types.
-  5. Camera Directions — 7 camera moves (slow_push, fast_zoom, dramatic_crop,
+  4. Documentary Visual Layer ΓÇö case files, evidence boards, redacted docs,
+     timeline walls ΓÇö auto-injected for investigative/documentary reel types.
+  5. Camera Directions ΓÇö 7 camera moves (slow_push, fast_zoom, dramatic_crop,
      whip_pan, parallax, ken_burns, dolly_in) per scene as scene["camera_move"].
-  6. Pattern Interrupt System — mandatory interrupt every scene (red_stamp,
+  6. Pattern Interrupt System ΓÇö mandatory interrupt every scene (red_stamp,
      document_slam, headline_flash, camera_shake, etc.) as scene["interrupt"].
-  7. Viral Loop Endings — 25% of eligible reels get a "Part 2 tomorrow" ending
+  7. Viral Loop Endings ΓÇö 25% of eligible reels get a "Part 2 tomorrow" ending
      before the CTA, injected into the visual_instruction prompt.
 
 All v8 features preserved. All existing CLI commands preserved.
@@ -31,24 +31,16 @@ Content Mix:
   15% Identity + Controversy (myth_bust, myth_ranking, contractor_identity, controversy_hook)
 
 Viral scoring (0-100):
-  scroll_stop_score (25pts) — hook strength, pattern interrupt
-  emotional_score   (25pts) — specificity, named archetypes, real dollars
-  curiosity_score   (25pts) — open loop, retention beats, reveals
-  comment_score     (15pts) — controversy, identity triggers, comment CTAs
-  save_score        (10pts) — checklist value, share-worthy content
+  scroll_stop_score (25pts) ΓÇö hook strength, pattern interrupt
+  emotional_score   (25pts) ΓÇö specificity, named archetypes, real dollars
+  curiosity_score   (25pts) ΓÇö open loop, retention beats, reveals
+  comment_score     (15pts) ΓÇö controversy, identity triggers, comment CTAs
+  save_score        (10pts) ΓÇö checklist value, share-worthy content
   Threshold: 65/100
 
 All v5 features preserved. All existing CLI commands preserved.
 """
 from __future__ import annotations
-
-import sys
-# Ensure emoji/Unicode output never crashes under Task Scheduler's cp1252 console.
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
 
 import argparse
 import json
@@ -65,7 +57,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Config ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 HEYGEN_API_KEY    = os.getenv("HEYGEN_API_KEY", "")
 PEXELS_API_KEY    = os.getenv("PEXELS_API_KEY", "")  # free key -> live themed video backgrounds
@@ -117,15 +109,15 @@ except Exception:
 INDEXNOW_KEY = "9e9b2e673445719e87ed5e2213724841"  # same key as social_media_poster.py
 
 
-# ── Visual Style System (v9 — IRS-red dark-gradient brand) ──────────────────────
+# ΓöÇΓöÇ Visual Style System (v9 ΓÇö IRS-red dark-gradient brand) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # One consistent, high-contrast, scroll-stopping look injected into every scene
-# description. STYLE ONLY — does not touch send/webhook/scoring/HeyGen submission.
+# description. STYLE ONLY ΓÇö does not touch send/webhook/scoring/HeyGen submission.
 COLOR_PALETTE = {
-    "primary":     "#CC0000",  # IRS red — hook keyword, alarm
-    "accent":      "#FF6B00",  # orange — highlights, positive/settlement keyword
-    "text":        "#FFFFFF",  # white — supporting/body text
-    "bg_top":      "#0A1628",  # deep navy — gradient top
-    "bg_bottom":   "#1A0500",  # near-black warm — gradient bottom
+    "primary":     "#CC0000",  # IRS red ΓÇö hook keyword, alarm
+    "accent":      "#FF6B00",  # orange ΓÇö highlights, positive/settlement keyword
+    "text":        "#FFFFFF",  # white ΓÇö supporting/body text
+    "bg_top":      "#0A1628",  # deep navy ΓÇö gradient top
+    "bg_bottom":   "#1A0500",  # near-black warm ΓÇö gradient bottom
     "bg_gradient": "linear-gradient(180deg, #0A1628 0%, #1A0500 100%)",
 }
 
@@ -136,7 +128,7 @@ TYPOGRAPHY = {
     "max_words":    6,  # never more than 6 words per text element
 }
 
-# IRS Data Book FY2025 figures — use verbatim in DATA scenes.
+# IRS Data Book FY2025 figures ΓÇö use verbatim in DATA scenes.
 IRS_DATA_FY2025 = {
     "nftls":                  "214,099",  # Notices of Federal Tax Lien filed
     "oic_acceptance_rate":    "14.1%",    # Offer in Compromise acceptance rate
@@ -145,11 +137,11 @@ IRS_DATA_FY2025 = {
 
 _P = COLOR_PALETTE
 VISUAL_STYLE_GUIDE = f"""
-VISUAL STYLE (apply to EVERY scene description — background, text color, visual, avatar position):
-- Background: deep navy-to-dark gradient {_P['bg_top']} -> {_P['bg_bottom']} for graphic scenes — NEVER a flat color.
+VISUAL STYLE (apply to EVERY scene description ΓÇö background, text color, visual, avatar position):
+- Background: deep navy-to-dark gradient {_P['bg_top']} -> {_P['bg_bottom']} for graphic scenes ΓÇö NEVER a flat color.
 - Primary keyword: large, bold, ALL CAPS, red {_P['primary']} or orange {_P['accent']}, 72px+.
 - Supporting text: white {_P['text']}, Title Case, ~36px, clean bold sans-serif ({TYPOGRAPHY['font']}).
-- Hook format: provocative statement split across 2 lines — BIG WORD in red/orange on top, "supporting phrase" in white below.
+- Hook format: provocative statement split across 2 lines ΓÇö BIG WORD in red/orange on top, "supporting phrase" in white below.
 - Never more than {TYPOGRAPHY['max_words']} words on screen at once. No cluttered layouts.
 - Text pops in fast; fast cuts between scenes; serious/tense music ducked under voice.
 - Palette: primary {_P['primary']}, accent {_P['accent']}, white {_P['text']}, gradient {_P['bg_top']} -> {_P['bg_bottom']}.
@@ -181,7 +173,7 @@ def get_style_notes(reel_type: str) -> dict:
     })
 
 
-# ── Script Length Tiers ────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Script Length Tiers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 SCRIPT_LENGTH_TIERS = {
     "micro":    {"min": 40,  "max": 90,  "seconds": "15-35"},
     "standard": {"min": 100, "max": 150, "seconds": "35-60"},
@@ -221,7 +213,7 @@ def get_word_limit(tier: str) -> int:
     return SCRIPT_LENGTH_TIERS.get(tier, SCRIPT_LENGTH_TIERS["standard"])["max"]
 
 
-# ── Named Archetypes (for story specificity) ────────────────────────────────────
+# ΓöÇΓöÇ Named Archetypes (for story specificity) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 ARCHETYPES = {
     "roofing_contractor": {
         "name": "Marcus",  "descriptor": "a roofing contractor in Broward County",
@@ -231,7 +223,7 @@ ARCHETYPES = {
     "restaurant_owner": {
         "name": "Elena",   "descriptor": "a Cuban restaurant owner in Miami-Dade",
         "debt_range": (22000, 67000), "problem": "payroll tax trust fund",
-        "detail": "tip income wasn't being reported properly — $47k in back taxes",
+        "detail": "tip income wasn't being reported properly ΓÇö $47k in back taxes",
     },
     "hvac_contractor": {
         "name": "Derek",   "descriptor": "an HVAC company owner in Harris County, Texas",
@@ -241,7 +233,7 @@ ARCHETYPES = {
     "landscaper": {
         "name": "Roberto", "descriptor": "a landscaping business owner in Palm Beach",
         "debt_range": (18000, 43000), "problem": "1099 worker misclassification",
-        "detail": "paid 12 crew members as 1099 contractors — IRS said they were employees",
+        "detail": "paid 12 crew members as 1099 contractors ΓÇö IRS said they were employees",
     },
     "trucking_owner": {
         "name": "James",   "descriptor": "a trucking company owner in Dallas County",
@@ -251,7 +243,7 @@ ARCHETYPES = {
     "real_estate_investor": {
         "name": "Sandra",  "descriptor": "a real estate investor in Orange County",
         "debt_range": (78000, 142000), "problem": "capital gains and depreciation recapture",
-        "detail": "sold four properties in one year — $142k tax bill she didn't see coming",
+        "detail": "sold four properties in one year ΓÇö $142k tax bill she didn't see coming",
     },
     "general_contractor": {
         "name": "Tony",    "descriptor": "a general contractor in Hillsborough County",
@@ -273,26 +265,26 @@ def pick_debt_amount(archetype: dict) -> int:
     return random.randint(lo // 1000, hi // 1000) * 1000
 
 
-# ── Visual Cue Library ─────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Visual Cue Library ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 VISUAL_CUE_LIBRARY = [
     {"type": "irs_notice",       "description": "IRS notice slams onto screen",          "overlay": "URGENT: IRS NOTICE"},
     {"type": "countdown",        "description": "Countdown timer ticking down",           "overlay": "30 DAYS LEFT"},
-    {"type": "debt_overlay",     "description": "Dollar amount flashes — specific number","overlay": "$87,000 OWED"},
+    {"type": "debt_overlay",     "description": "Dollar amount flashes ΓÇö specific number","overlay": "$87,000 OWED"},
     {"type": "public_record",    "description": "Public record stamp on document",        "overlay": "PUBLIC RECORD"},
     {"type": "bank_freeze",      "description": "Bank account balance drops to $0",       "overlay": "ACCOUNT FROZEN"},
-    {"type": "mailbox",          "description": "Overflowing mailbox — unopened letters",  "overlay": "3 NOTICES IGNORED"},
+    {"type": "mailbox",          "description": "Overflowing mailbox ΓÇö unopened letters",  "overlay": "3 NOTICES IGNORED"},
     {"type": "contractor_truck", "description": "Contractor truck at jobsite",             "overlay": "CONTRACTORS: READ THIS"},
-    {"type": "red_arrow",        "description": "Red arrow on document pointing to amount","overlay": "⚠️ THIS IS YOUR DEBT"},
-    {"type": "lien_stamp",       "description": "Federal tax lien stamp — county recorder","overlay": "FEDERAL TAX LIEN FILED"},
+    {"type": "red_arrow",        "description": "Red arrow on document pointing to amount","overlay": "ΓÜá∩╕Å THIS IS YOUR DEBT"},
+    {"type": "lien_stamp",       "description": "Federal tax lien stamp ΓÇö county recorder","overlay": "FEDERAL TAX LIEN FILED"},
     {"type": "phone_ring",       "description": "IRS Revenue Officer calling",             "overlay": "IRS IS CALLING"},
-    {"type": "before_after",     "description": "Split screen — stressed vs resolved",     "overlay": "BEFORE → AFTER"},
+    {"type": "before_after",     "description": "Split screen ΓÇö stressed vs resolved",     "overlay": "BEFORE ΓåÆ AFTER"},
     {"type": "checklist",        "description": "Checklist items checking off",            "overlay": "SAVE THIS CHECKLIST"},
     {"type": "myth_reality",     "description": "MYTH stamped red, REALITY stamped green","overlay": "MYTH vs REALITY"},
     {"type": "county_map",       "description": "County highlighted on state map",         "overlay": "YOUR COUNTY: ACTIVE"},
-    {"type": "penalty_ticker",   "description": "Penalty counter ticking up — live",      "overlay": "$47/DAY COMPOUNDING"},
-    {"type": "dashboard_alert",  "description": "Red warning dashboard graphic",           "overlay": "⚠️ IRS ESCALATION ALERT"},
-    {"type": "calendar",         "description": "Calendar — 30 days marking off fast",    "overlay": "CLOCK IS RUNNING"},
-    {"type": "heat_map",         "description": "County heat map — red = high lien activity","overlay": "LIEN ACTIVITY MAP"},
+    {"type": "penalty_ticker",   "description": "Penalty counter ticking up ΓÇö live",      "overlay": "$47/DAY COMPOUNDING"},
+    {"type": "dashboard_alert",  "description": "Red warning dashboard graphic",           "overlay": "ΓÜá∩╕Å IRS ESCALATION ALERT"},
+    {"type": "calendar",         "description": "Calendar ΓÇö 30 days marking off fast",    "overlay": "CLOCK IS RUNNING"},
+    {"type": "heat_map",         "description": "County heat map ΓÇö red = high lien activity","overlay": "LIEN ACTIVITY MAP"},
     {"type": "lien_document",    "description": "Actual lien document with amount visible","overlay": "FILED IN PUBLIC RECORD"},
     {"type": "revenue_officer",  "description": "IRS agent at desk reviewing file",        "overlay": "IRS AGENT PERSPECTIVE"},
 ]
@@ -343,14 +335,14 @@ def get_visual_cues_for_type(reel_type: str) -> list:
     return [cue_dict[k] for k in keys if k in cue_dict]
 
 
-# ── Open Loop Library ──────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Open Loop Library ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 OPEN_LOOP_LIBRARY = [
     "But the IRS wasn't the real problem.",
     "Here's the part nobody expects.",
     "The mistake happened before the notice arrived.",
     "And this is where most people lose options.",
     "The scary part is not the lien. It's what comes next.",
-    "But wait — here's what changed everything.",
+    "But wait ΓÇö here's what changed everything.",
     "And then something the IRS rarely tells you.",
     "Most people stop here. That's the mistake.",
     "Here's where it gets interesting.",
@@ -363,7 +355,7 @@ OPEN_LOOP_LIBRARY = [
     "And this is exactly where it went wrong.",
 ]
 
-# ── Controversy Frameworks ─────────────────────────────────────────────────────
+# ΓöÇΓöÇ Controversy Frameworks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 CONTROVERSY_FRAMES = [
     "What people think: {myth}. What's actually true: {reality}.",
     "The advice everyone gives about this is completely wrong. Here's why.",
@@ -373,16 +365,16 @@ CONTROVERSY_FRAMES = [
     "The IRS is counting on you believing this. Don't.",
 ]
 
-# ── Comment-Bait Phrases ───────────────────────────────────────────────────────
+# ΓöÇΓöÇ Comment-Bait Phrases ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 COMMENT_TRIGGERS = [
-    "Drop your state below — I'll tell you what IRS activity looks like there right now.",
+    "Drop your state below ΓÇö I'll tell you what IRS activity looks like there right now.",
     "Comment HELP if you've gotten a notice this month. You're not alone.",
     "Comment CP504 if you've seen this letter. I'll explain what to do next.",
     "Comment CONTRACTOR if you're in the trades. This affects your industry more than any other.",
     "Comment BUSINESS if you're self-employed. What I'm about to say is critical for you.",
-    "Tell me in the comments — how long have you been avoiding this?",
-    "Comment FLORIDA, TEXAS, or your state below — I'll post your county data.",
-    "Drop a 💀 if this is your exact situation right now.",
+    "Tell me in the comments ΓÇö how long have you been avoiding this?",
+    "Comment FLORIDA, TEXAS, or your state below ΓÇö I'll post your county data.",
+    "Drop a ≡ƒÆÇ if this is your exact situation right now.",
     "Comment CHECKLIST and I'll send the IRS response guide.",
     "Have you gotten this letter? Tell me what happened in the comments.",
 ]
@@ -397,10 +389,10 @@ def pick_controversy() -> str:
     return random.choice(CONTROVERSY_FRAMES)
 
 
-# ── CTA Strategy ───────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ CTA Strategy ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 CTA_STRATEGY_WEIGHTS = {
     "quiz_cta":        0.25,
-    "comment_cta":     0.30,  # Raised — comment > quiz for virality
+    "comment_cta":     0.30,  # Raised ΓÇö comment > quiz for virality
     "save_cta":        0.20,
     "follow_cta":      0.15,
     "lead_magnet_cta": 0.10,
@@ -445,27 +437,27 @@ def pick_cta_strategy(reel_type: str) -> str:
 
 CTA_TEMPLATES = {
     "quiz_cta": [
-        "If this sounds like your situation — taxcasereview.org/quiz. 6 questions. 60 seconds. See what options apply to you.",
-        "Find out where you stand: taxcasereview.org/quiz — 60 seconds, completely free, no obligation.",
-        "Don't guess. taxcasereview.org/quiz — answer 6 questions, see your real options.",
+        "If this sounds like your situation ΓÇö taxcasereview.org/quiz. 6 questions. 60 seconds. See what options apply to you.",
+        "Find out where you stand: taxcasereview.org/quiz ΓÇö 60 seconds, completely free, no obligation.",
+        "Don't guess. taxcasereview.org/quiz ΓÇö answer 6 questions, see your real options.",
     ],
     "comment_cta": COMMENT_TRIGGERS,
     "save_cta": [
         "Save this. Forward it to anyone who's been avoiding IRS letters.",
-        "Save this reel — it could save someone thousands.",
+        "Save this reel ΓÇö it could save someone thousands.",
         "Save this checklist. Most people wish they'd seen this sooner.",
     ],
     "follow_cta": [
-        "Follow for weekly IRS breakdowns — real cases, real data, plain English.",
+        "Follow for weekly IRS breakdowns ΓÇö real cases, real data, plain English.",
         "Follow me. I post IRS intelligence nobody else is talking about.",
-        "Follow TaxCase Review — former IRS insider, real stories, every week.",
+        "Follow TaxCase Review ΓÇö former IRS insider, real stories, every week.",
     ],
     "lead_magnet_cta": [
         "Comment GUIDE below and I'll send the IRS Response Checklist.",
         "Comment CP504 for our free CP504 Action Guide.",
         "Comment CONTRACTOR for the Contractor Payroll Tax Checklist.",
         "Comment LIEN for the Federal Tax Lien Response Guide.",
-        "Comment CHECKLIST — I'll send it directly.",
+        "Comment CHECKLIST ΓÇö I'll send it directly.",
     ],
 }
 
@@ -473,7 +465,7 @@ def get_cta_text(strategy: str) -> str:
     return random.choice(CTA_TEMPLATES.get(strategy, CTA_TEMPLATES["quiz_cta"]))
 
 
-# ── Lead Magnets ───────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Lead Magnets ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 LEAD_MAGNETS = {
     "irs_survival":  {"name": "IRS Survival Checklist",            "keyword": "CHECKLIST", "url": QUIZ_URL},
     "cp504_guide":   {"name": "CP504 Action Guide",                "keyword": "CP504",     "url": QUIZ_URL},
@@ -498,7 +490,7 @@ def pick_lead_magnet(reel_type: str) -> dict:
     return LEAD_MAGNETS[LEAD_MAGNET_TYPE_MAP.get(reel_type, "irs_survival")]
 
 
-# ── Contractor Series ──────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Contractor Series ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 CONTRACTOR_SERIES = {
     "roofing":          {"label": "Roofers",              "tax_issue": "payroll tax and 1099 misclassification",  "detail": "crew paid cash, 941 deposits fall behind during slow season"},
     "hvac":             {"label": "HVAC Companies",        "tax_issue": "payroll tax and seasonal cash flow gaps", "detail": "summer revenue spike doesn't get set aside for quarterly deposits"},
@@ -511,14 +503,14 @@ CONTRACTOR_SERIES = {
 }
 
 
-# ── Hook Library ───────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Hook Library ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 HOOK_LIBRARY = {
     "fear": [
         "The IRS doesn't send scary letters first.",
         "By the time most people call us, the IRS has already started.",
         "There's a letter most people throw away. It's the most important one.",
         "You have 30 days. Most people don't know that.",
-        "When the IRS goes quiet — that's when you should be most worried.",
+        "When the IRS goes quiet ΓÇö that's when you should be most worried.",
         "The IRS filed this on a Monday. By Friday, the bank account was frozen.",
     ],
     "curiosity": [
@@ -532,10 +524,10 @@ HOOK_LIBRARY = {
     ],
     "identity": [
         "If you're self-employed, listen carefully.",
-        "If you're a contractor and you're behind on taxes — this is for you.",
+        "If you're a contractor and you're behind on taxes ΓÇö this is for you.",
         "If you've been avoiding your mailbox, you need to hear this.",
-        "If you got a letter from the IRS this week — stop what you're doing.",
-        "If you're a restaurant owner, a landscaper, or an HVAC tech — this affects your industry more than any other.",
+        "If you got a letter from the IRS this week ΓÇö stop what you're doing.",
+        "If you're a restaurant owner, a landscaper, or an HVAC tech ΓÇö this affects your industry more than any other.",
         "If you've been ignoring IRS letters, I want to talk to you directly.",
     ],
     "insider": [
@@ -583,7 +575,7 @@ HOOK_LIBRARY = {
         "IRS liens in {county} County are up this month.",
         "{count} business owners in {county} County woke up to a federal tax lien this week.",
         "Something is happening in {county} County that contractors need to know about.",
-        "If you're in {county} County and you're behind on taxes — listen to this.",
+        "If you're in {county} County and you're behind on taxes ΓÇö listen to this.",
     ],
 }
 
@@ -595,7 +587,7 @@ SAVE_WORTHY_TYPES = {
 }
 
 
-# ── v9 UPGRADE: Avatar Screen-Time Cap ────────────────────────────────────────
+# ΓöÇΓöÇ v9 UPGRADE: Avatar Screen-Time Cap ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Enforced in build_visual_storyboard_template and injected into visual_instruction.
 # Does NOT touch scoring, HeyGen submission, or Claude generation logic.
 MAX_AVATAR_SCENES   = 3     # hard cap: at most 3 of 9 storyboard scenes show avatar
@@ -603,14 +595,14 @@ MAX_AVATAR_PERCENT  = 0.30  # 30% screen time max
 
 # Replacement visuals used when avatar cap is exceeded
 AVATAR_REPLACEMENT_VISUALS = [
-    "document reveal — IRS lien filing zoomed, amount highlighted",
-    "county map — lien heat overlay, active counties marked red",
-    "full-screen IRS notice — certified mail stamp, date visible",
-    "public record search — county recorder portal, name blurred",
-    "penalty counter — dollar amount ticking up in real time",
-    "evidence board — documents pinned, timeline arrows",
-    "case file folder — redacted name, lien amount visible",
-    "breaking news lower third — county + lien count data",
+    "document reveal ΓÇö IRS lien filing zoomed, amount highlighted",
+    "county map ΓÇö lien heat overlay, active counties marked red",
+    "full-screen IRS notice ΓÇö certified mail stamp, date visible",
+    "public record search ΓÇö county recorder portal, name blurred",
+    "penalty counter ΓÇö dollar amount ticking up in real time",
+    "evidence board ΓÇö documents pinned, timeline arrows",
+    "case file folder ΓÇö redacted name, lien amount visible",
+    "breaking news lower third ΓÇö county + lien count data",
 ]
 
 def validate_avatar_ratio(storyboard: list[dict]) -> tuple[bool, int]:
@@ -650,23 +642,23 @@ def enforce_avatar_cap(storyboard: list[dict]) -> list[dict]:
             row = dict(row)
             row["visual"]      = replacement
             row["editor_note"] = (row.get("editor_note", "") +
-                                  " [v9: avatar replaced — cap enforced]")
+                                  " [v9: avatar replaced ΓÇö cap enforced]")
         elif is_avatar:
             avatar_seen += 1
         patched.append(row)
     return patched
 
 
-# ── v9 UPGRADE: Motion Graphics Library ───────────────────────────────────────
+# ΓöÇΓöÇ v9 UPGRADE: Motion Graphics Library ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Attached as scene["motion_graphic"] in enriched storyboard rows.
-# Purely additive — does not alter any existing field.
+# Purely additive ΓÇö does not alter any existing field.
 MOTION_GRAPHICS = [
     "money_counter",        # dollar amount counting up to lien total
     "countdown_timer",      # 30-day IRS response window ticking down
     "red_alert_pulse",      # pulsing red ring around key number/document
     "document_stamp",       # FEDERAL TAX LIEN stamp slamming onto document
     "heat_map_animation",   # county lien activity spreading across state map
-    "timeline_animation",   # IRS collection sequence: notice → lien → levy
+    "timeline_animation",   # IRS collection sequence: notice ΓåÆ lien ΓåÆ levy
     "zoom_to_amount",       # camera pushes into dollar figure
     "checklist_build",      # checklist items checking off one by one
     "breaking_news_banner", # lower-third ticker: "X LIENS FILED IN [COUNTY]"
@@ -696,50 +688,50 @@ def get_motion_graphic(reel_type: str) -> str:
     return MOTION_GRAPHIC_BY_TYPE.get(reel_type, random.choice(MOTION_GRAPHICS))
 
 
-# ── v9 UPGRADE: Human B-Roll Library ─────────────────────────────────────────
+# ΓöÇΓöÇ v9 UPGRADE: Human B-Roll Library ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Industry-specific human b-roll descriptions injected into storyboard scenes.
 # Replaces generic "b-roll" references with specific, platform-native imagery.
 HUMAN_BROLL = {
     "contractor": [
-        "roofer climbing ladder at sunrise — safety gear, shingle bundles visible",
-        "contractor crew morning meeting at truck — blueprints, hard hats",
-        "HVAC tech working rooftop unit — commercial building background",
-        "electrician pulling wire through conduit — focused, professional",
-        "plumber under kitchen sink — homeowner watching, explaining issue",
-        "general contractor walking job site — clipboard, active construction background",
-        "framing crew raising walls — fast progress, team coordination visible",
-        "concrete pour — crew working together, deadline energy",
+        "roofer climbing ladder at sunrise ΓÇö safety gear, shingle bundles visible",
+        "contractor crew morning meeting at truck ΓÇö blueprints, hard hats",
+        "HVAC tech working rooftop unit ΓÇö commercial building background",
+        "electrician pulling wire through conduit ΓÇö focused, professional",
+        "plumber under kitchen sink ΓÇö homeowner watching, explaining issue",
+        "general contractor walking job site ΓÇö clipboard, active construction background",
+        "framing crew raising walls ΓÇö fast progress, team coordination visible",
+        "concrete pour ΓÇö crew working together, deadline energy",
     ],
     "restaurant": [
-        "restaurant owner reviewing bills at empty table — early morning, stress visible",
-        "kitchen prep crew — fast-paced, steam, commercial kitchen",
-        "server taking order — busy dinner service, floor energy",
-        "owner closing up alone — counting register, exhausted but focused",
-        "food delivery stacked at back door — supplier relationship",
-        "chef reviewing payroll printout — concerned expression",
+        "restaurant owner reviewing bills at empty table ΓÇö early morning, stress visible",
+        "kitchen prep crew ΓÇö fast-paced, steam, commercial kitchen",
+        "server taking order ΓÇö busy dinner service, floor energy",
+        "owner closing up alone ΓÇö counting register, exhausted but focused",
+        "food delivery stacked at back door ΓÇö supplier relationship",
+        "chef reviewing payroll printout ΓÇö concerned expression",
     ],
     "trucking": [
-        "truck driver pre-trip inspection — clipboard, big rig at dock",
-        "dispatcher on phone — logistics office, screens with routes",
-        "owner loading freight at warehouse — hands-on operation",
-        "semi truck highway driving — sunrise, empty road ahead",
-        "fleet of trucks in yard — scale of operation visible",
-        "driver reviewing paperwork at weigh station — compliance reality",
+        "truck driver pre-trip inspection ΓÇö clipboard, big rig at dock",
+        "dispatcher on phone ΓÇö logistics office, screens with routes",
+        "owner loading freight at warehouse ΓÇö hands-on operation",
+        "semi truck highway driving ΓÇö sunrise, empty road ahead",
+        "fleet of trucks in yard ΓÇö scale of operation visible",
+        "driver reviewing paperwork at weigh station ΓÇö compliance reality",
     ],
     "real_estate": [
-        "real estate investor reviewing property documents — kitchen table, coffee",
-        "property walkthrough — agent and investor, vacant house",
-        "closing table — documents, handshake, keys exchanged",
-        "contractor meeting at flip property — renovation in progress",
-        "owner reviewing rental income spreadsheet — home office",
+        "real estate investor reviewing property documents ΓÇö kitchen table, coffee",
+        "property walkthrough ΓÇö agent and investor, vacant house",
+        "closing table ΓÇö documents, handshake, keys exchanged",
+        "contractor meeting at flip property ΓÇö renovation in progress",
+        "owner reviewing rental income spreadsheet ΓÇö home office",
     ],
     "small_business": [
-        "small business owner opening shop alone — keys, early morning",
-        "owner reviewing bank statement at desk — concerned, focused",
-        "business owner on phone with serious expression — problem-solving mode",
-        "entrepreneur in warehouse — inventory, fulfillment reality",
-        "family business — generational, emotional stakes visible",
-        "owner meeting with accountant — documents spread across table",
+        "small business owner opening shop alone ΓÇö keys, early morning",
+        "owner reviewing bank statement at desk ΓÇö concerned, focused",
+        "business owner on phone with serious expression ΓÇö problem-solving mode",
+        "entrepreneur in warehouse ΓÇö inventory, fulfillment reality",
+        "family business ΓÇö generational, emotional stakes visible",
+        "owner meeting with accountant ΓÇö documents spread across table",
     ],
 }
 
@@ -761,20 +753,20 @@ def get_human_broll(trade: str = "", reel_type: str = "") -> str:
     return random.choice(pool)
 
 
-# ── v9 UPGRADE: Documentary / Investigative Visual Library ────────────────────
+# ΓöÇΓöÇ v9 UPGRADE: Documentary / Investigative Visual Library ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Injected automatically for investigative and documentary format reels.
 # Makes public-record reels feel like Netflix investigations.
 DOCUMENTARY_VISUALS = [
-    "case file folder — red ACTIVE stamp, lien amount on tab",
-    "redacted IRS document — name blurred, amount and county visible",
-    "evidence board — photos, documents, timeline arrows connecting facts",
-    "timeline wall — each event pinned with date, escalation visible",
-    "county records search — computer screen, public database results",
-    "document zoom — slow push into filed lien amount, date of filing",
-    "public record highlight — cursor scrolling to name, county, amount",
-    "signature reveal — bottom of document, notarized stamp, county seal",
-    "file cabinet drawer opening — folders, case numbers visible",
-    "courier delivering certified mail — signature required, IRS return address",
+    "case file folder ΓÇö red ACTIVE stamp, lien amount on tab",
+    "redacted IRS document ΓÇö name blurred, amount and county visible",
+    "evidence board ΓÇö photos, documents, timeline arrows connecting facts",
+    "timeline wall ΓÇö each event pinned with date, escalation visible",
+    "county records search ΓÇö computer screen, public database results",
+    "document zoom ΓÇö slow push into filed lien amount, date of filing",
+    "public record highlight ΓÇö cursor scrolling to name, county, amount",
+    "signature reveal ΓÇö bottom of document, notarized stamp, county seal",
+    "file cabinet drawer opening ΓÇö folders, case numbers visible",
+    "courier delivering certified mail ΓÇö signature required, IRS return address",
 ]
 
 # Reel types that automatically get documentary visual injection
@@ -795,20 +787,20 @@ def get_documentary_visual(reel_type: str = "") -> str:
     return ""
 
 
-# ── v9 UPGRADE: Camera Directions ─────────────────────────────────────────────
-# Added as scene["camera_move"] — pure metadata for editors and AI video tools.
+# ΓöÇΓöÇ v9 UPGRADE: Camera Directions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# Added as scene["camera_move"] ΓÇö pure metadata for editors and AI video tools.
 # Increases production value and retention without touching any existing field.
 CAMERA_MOVES = [
-    "slow_push",      # slow forward push into subject — builds tension
-    "fast_zoom",      # sudden zoom to key element — shock/reveal
-    "dramatic_crop",  # tight crop on face/document/amount — isolates detail
-    "whip_pan",       # fast lateral cut between subjects — energy, urgency
-    "parallax",       # background moves slower than foreground — depth
-    "ken_burns",      # slow pan + zoom across still image — documentary feel
-    "dolly_in",       # smooth forward move — approaching consequence
+    "slow_push",      # slow forward push into subject ΓÇö builds tension
+    "fast_zoom",      # sudden zoom to key element ΓÇö shock/reveal
+    "dramatic_crop",  # tight crop on face/document/amount ΓÇö isolates detail
+    "whip_pan",       # fast lateral cut between subjects ΓÇö energy, urgency
+    "parallax",       # background moves slower than foreground ΓÇö depth
+    "ken_burns",      # slow pan + zoom across still image ΓÇö documentary feel
+    "dolly_in",       # smooth forward move ΓÇö approaching consequence
 ]
 
-# Scene timing → camera move pairing (by scene index in storyboard, 0-based)
+# Scene timing ΓåÆ camera move pairing (by scene index in storyboard, 0-based)
 CAMERA_MOVE_BY_SCENE = {
     0: "fast_zoom",     # hook scene: immediate pattern interrupt
     1: "dramatic_crop", # problem scene: isolate the evidence
@@ -831,18 +823,18 @@ def get_camera_move(scene_index: int, reel_format: str = "") -> str:
     return CAMERA_MOVE_BY_SCENE.get(scene_index, random.choice(CAMERA_MOVES))
 
 
-# ── v9 UPGRADE: Pattern Interrupt System ──────────────────────────────────────
+# ΓöÇΓöÇ v9 UPGRADE: Pattern Interrupt System ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Mandatory interrupts injected every 3-5 seconds via scene["interrupt"].
-# Rule: every scene gets one interrupt — keeps viewers from auto-scrolling.
+# Rule: every scene gets one interrupt ΓÇö keeps viewers from auto-scrolling.
 PATTERN_INTERRUPTS = [
-    "record_scratch",    # hard audio/visual stop — resets attention
+    "record_scratch",    # hard audio/visual stop ΓÇö resets attention
     "camera_shake",      # brief shake on key impact moment
-    "glitch",            # digital glitch effect — modern, attention-grabbing
-    "countdown",         # number appears suddenly — urgency spike
-    "alert_sound",       # audio sting on key word — podcast-style emphasis
+    "glitch",            # digital glitch effect ΓÇö modern, attention-grabbing
+    "countdown",         # number appears suddenly ΓÇö urgency spike
+    "alert_sound",       # audio sting on key word ΓÇö podcast-style emphasis
     "red_stamp",         # LIEN / LEVY / FROZEN stamp slams onto screen
     "headline_flash",    # white text flashes: key fact in 1 second
-    "document_slam",     # document slams onto screen — physical impact
+    "document_slam",     # document slams onto screen ΓÇö physical impact
 ]
 
 # High-impact interrupt types by reel format
@@ -869,9 +861,9 @@ def get_pattern_interrupt(reel_format: str = "", scene_index: int = 0) -> str:
     return random.choice(candidates)
 
 
-# ── v9 UPGRADE: Viral Loop Endings ────────────────────────────────────────────
+# ΓöÇΓöÇ v9 UPGRADE: Viral Loop Endings ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Used on 25% of reels BEFORE the CTA. Drives follows, series viewing, saves.
-# Picked via should_use_loop_ending() — does not replace CTA, prepends it.
+# Picked via should_use_loop_ending() ΓÇö does not replace CTA, prepends it.
 LOOP_ENDINGS = [
     "Part 2 tomorrow. Follow so you don't miss it.",
     "The document gets worse. I'll show it next week.",
@@ -881,7 +873,7 @@ LOOP_ENDINGS = [
     "Tomorrow I'll show the actual IRS notice that started this.",
     "The OIC outcome is in the next reel. Follow TaxCase Review.",
     "Next post: what the Revenue Officer said when they finally called.",
-    "Part 2 drops Thursday. Follow — it's the part nobody talks about.",
+    "Part 2 drops Thursday. Follow ΓÇö it's the part nobody talks about.",
     "The bank levy came 11 days later. That's next.",
 ]
 
@@ -901,13 +893,13 @@ def get_loop_ending() -> str:
     return random.choice(LOOP_ENDINGS)
 
 
-# ── v9: Storyboard enrichment helper ─────────────────────────────────────────
+# ΓöÇΓöÇ v9: Storyboard enrichment helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def enrich_storyboard(storyboard: list[dict], reel_type: str,
                       reel_format: str = "", trade: str = "") -> list[dict]:
     """
     Additive enrichment pass over a parsed storyboard.
     Adds: motion_graphic, camera_move, interrupt, human_broll (where applicable).
-    Never modifies time/visual/overlay/editor_note — only adds new keys.
+    Never modifies time/visual/overlay/editor_note ΓÇö only adds new keys.
     Also enforces avatar cap.
     """
     # 1. Enforce avatar cap first
@@ -927,7 +919,7 @@ def enrich_storyboard(storyboard: list[dict], reel_type: str,
         # Pattern interrupt
         row["interrupt"] = get_pattern_interrupt(reel_format, i)
 
-        # Motion graphic (first scene only — anchor it to the hook)
+        # Motion graphic (first scene only ΓÇö anchor it to the hook)
         if i == 0:
             row["motion_graphic"] = motion_graphic
 
@@ -944,7 +936,7 @@ def enrich_storyboard(storyboard: list[dict], reel_type: str,
     return enriched
 
 
-# ── v8 Format Engine: topic second, format first ───────────────────────────────
+# ΓöÇΓöÇ v8 Format Engine: topic second, format first ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 REEL_FORMATS = {
     "coffeezilla": {
         "style": "calm investigative takedown of bad advice or hidden risk",
@@ -1110,7 +1102,7 @@ def build_five_scene_structure(reel_type: str, county: str, state_name: str, amo
                                data_label: str = "IRS LIENS FILED") -> list[dict]:
     """The 5-scene visual builder (HOOK -> PROBLEM -> DATA -> SOLUTION -> CTA).
     Every scene specifies background, text overlay (+color), visual element, and
-    avatar position. STYLE ONLY — drives scene descriptions, not scoring/render."""
+    avatar position. STYLE ONLY ΓÇö drives scene descriptions, not scoring/render."""
     g    = COLOR_PALETTE
     stat = data_stat or IRS_DATA_FY2025["nftls"]
     grad = f"navy-to-dark gradient {g['bg_top']} -> {g['bg_bottom']}"
@@ -1121,7 +1113,7 @@ def build_five_scene_structure(reel_type: str, county: str, state_name: str, amo
          "text_overlay": f'"{hook_keyword}" (red {g["primary"]}, 72px+) over "supporting phrase" (white {g["text"]}, 36px), top of frame',
          "visual": "bold 2-line text overlay above avatar, fast pop-in"},
         {"scene": 2, "name": "PROBLEM", "duration": "8-10s",
-         "background": f"split screen on {grad} — graphic top half, avatar bottom half",
+         "background": f"split screen on {grad} ΓÇö graphic top half, avatar bottom half",
          "avatar": "bottom half, talking",
          "text_overlay": f"white {g['text']} keyword, max {TYPOGRAPHY['max_words']} words",
          "visual": "top half shows IRS notice / lien document / bank statement"},
@@ -1129,7 +1121,7 @@ def build_five_scene_structure(reel_type: str, county: str, state_name: str, amo
          "background": f"full-screen {grad}",
          "avatar": "OFF screen this scene",
          "text_overlay": f"{stat} centered (white {g['text']}, bold) + '{data_label}' below (orange {g['accent']}, 2-3 words)",
-         "visual": f"full-screen motion graphic — IRS Data Book FY2025 stat ({stat})"},
+         "visual": f"full-screen motion graphic ΓÇö IRS Data Book FY2025 stat ({stat})"},
         {"scene": 4, "name": "SOLUTION", "duration": "8-10s",
          "background": f"{grad} with animated graphic elements beside/behind avatar",
          "avatar": "talking head, resolution graphic animates beside/behind",
@@ -1138,7 +1130,7 @@ def build_five_scene_structure(reel_type: str, county: str, state_name: str, amo
         {"scene": 5, "name": "CTA", "duration": "4-5s",
          "background": f"full-screen {grad}",
          "avatar": "OFF screen this scene",
-         "text_overlay": f'rounded pill button "↓ BOOK FREE REVIEW ↓" (white {g["text"]}) + "taxcasereview.org" below (white, smaller)',
+         "text_overlay": f'rounded pill button "Γåô BOOK FREE REVIEW Γåô" (white {g["text"]}) + "taxcasereview.org" below (white, smaller)',
          "visual": "bold CTA pill button, fast pop-in"},
     ]
 
@@ -1182,7 +1174,7 @@ def parse_pipe_rows(raw: str, min_rows: int = 0) -> list[dict]:
             continue
         parts = [p.strip() for p in line.split("|")]
         # A leading/trailing pipe (| a | b | c |) produces empty first/last
-        # elements that shift every column right by one — drop them so
+        # elements that shift every column right by one ΓÇö drop them so
         # parts[0]=time, parts[1]=visual, parts[2]=overlay, parts[3]=editor_note.
         while parts and parts[0] == "":
             parts.pop(0)
@@ -1232,7 +1224,7 @@ def clamp_int(value, default=0, lo=0, hi=100):
     except Exception:
         return default
 
-# ── Content Mix Rotations (new mix: 40/25/20/15) ───────────────────────────────
+# ΓöÇΓöÇ Content Mix Rotations (new mix: 40/25/20/15) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 SUNDAY_ROTATION = [
     # Public Record Intelligence (40%)
     "county_lien_alert", "public_record_breakdown", "biggest_lien_of_the_week",
@@ -1259,7 +1251,7 @@ THURSDAY_ROTATION = [
 ]
 
 
-# ── HeyGen usage tracker ───────────────────────────────────────────────────────
+# ΓöÇΓöÇ HeyGen usage tracker ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def load_heygen_usage() -> dict:
     if HEYGEN_USAGE_FILE.exists():
         try: return json.loads(HEYGEN_USAGE_FILE.read_text())
@@ -1281,7 +1273,7 @@ def record_heygen_render(video_id: str, reel_type: str):
     usage["count"] += 1
     usage["renders"].append({"date": date.today().isoformat(), "video_id": video_id, "reel_type": reel_type})
     save_heygen_usage(usage)
-    print(f"  📊 HeyGen: {usage['count']}/{HEYGEN_MAX_USE} | ~{usage['count']*HEYGEN_CREDITS_PER_VIDEO}/{HEYGEN_MONTHLY_CREDITS} credits")
+    print(f"  ≡ƒôè HeyGen: {usage['count']}/{HEYGEN_MAX_USE} | ~{usage['count']*HEYGEN_CREDITS_PER_VIDEO}/{HEYGEN_MONTHLY_CREDITS} credits")
 
 def can_use_heygen() -> tuple[bool, str]:
     used = get_heygen_usage_this_month()
@@ -1290,11 +1282,11 @@ def can_use_heygen() -> tuple[bool, str]:
     return True, f"{used}/{HEYGEN_MAX_USE} renders used"
 
 
-# ── Scheduling ─────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Scheduling ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def get_schedule_for_today() -> tuple[str | None, str | None]:
     week_num = date.today().isocalendar()[1]
     day      = datetime.now().weekday()
-    # Task Scheduler controls WHEN this runs — no day-gating here.
+    # Task Scheduler controls WHEN this runs ΓÇö no day-gating here.
     # Rotate through reel types based on day of week for variety.
     if day == 2:   return "remotion", "weekly_stats"       # Wednesday
     elif day == 6: return "heygen", SUNDAY_ROTATION[week_num % len(SUNDAY_ROTATION)]
@@ -1318,7 +1310,7 @@ def should_use_authority() -> bool:
     return random.random() < 0.25
 
 
-# ── DB: lien stats ─────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ DB: lien stats ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def get_weekly_lien_stats(county: str = None, state: str = None) -> dict:
     if not HAS_DB:
         counties  = random.sample(FLORIDA_COUNTIES, 5)
@@ -1361,7 +1353,7 @@ def get_weekly_lien_stats(county: str = None, state: str = None) -> dict:
         conn.close()
 
 
-# ── Claude API ─────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Claude API ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def call_claude(prompt: str, max_tokens: int = 900) -> str:
     if not ANTHROPIC_API_KEY: raise RuntimeError("ANTHROPIC_API_KEY not set")
     r = requests.post("https://api.anthropic.com/v1/messages",
@@ -1374,7 +1366,7 @@ def call_claude(prompt: str, max_tokens: int = 900) -> str:
     return r.json()["content"][0]["text"].strip()
 
 
-# ── Viral Quality Scoring (0-100, threshold 72) ─────────────────────────────────
+# ΓöÇΓöÇ Viral Quality Scoring (0-100, threshold 72) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def score_reel_script(script_data: dict) -> dict:
     """
     v8 Top 1% scoring system.
@@ -1411,7 +1403,7 @@ def score_reel_script(script_data: dict) -> dict:
     if any(x in first_line for x in hard_interrupts): ss += 10
     elif any(x in first_line for x in ["irs", "lien", "notice", "contractor", "$", "tax debt"]): ss += 7
     elif len(first_line) > 28: ss += 5
-    # Also scan storyboard editor_notes — visual cue keywords live there, not in spoken script
+    # Also scan storyboard editor_notes ΓÇö visual cue keywords live there, not in spoken script
     storyboard_text = " ".join(str(row.get("editor_note","")) + " " + str(row.get("visual","")) for row in storyboard).lower()
     if any(x in full_text or x in storyboard_text for x in ["full screen", "pattern interrupt", "no avatar", "sound hit", "document slams", "red_stamp", "document_slam", "headline_flash", "camera_shake"]): ss += 3
     if "?" in first_line or any(x in first_line for x in ["why", "how", "what happened"]): ss += 2
@@ -1514,23 +1506,23 @@ def score_reel_script(script_data: dict) -> dict:
     }
 
 
-# ── Main script generator ──────────────────────────────────────────────────────
+# ΓöÇΓöÇ Main script generator ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def generate_heygen_script(reel_type: str, context: dict, force: bool = False) -> dict:
     for attempt in range(3):
         result       = _generate_once(reel_type, context)
         viral_scores = score_reel_script(result)
         result["viral_scores"]  = viral_scores
         result["quality_score"] = viral_scores["total"]
-        print(f"  {'✅' if viral_scores['total'] >= QUALITY_THRESHOLD else '⚠️ '} "
+        print(f"  {'Γ£à' if viral_scores['total'] >= QUALITY_THRESHOLD else 'ΓÜá∩╕Å '} "
               f"Viral score: {viral_scores['total']}/100 | "
               f"scroll={viral_scores['scroll_stop_score']} emotional={viral_scores['emotional_score']} "
               f"curiosity={viral_scores['curiosity_score']} visual={viral_scores.get('visual_story_score',0)} comment={viral_scores['comment_score']} format={result.get('reel_format','')}")
         if viral_scores["total"] >= QUALITY_THRESHOLD or attempt == 1 or force:
             if viral_scores["total"] < QUALITY_THRESHOLD and not force:
-                print(f"  ⚠️  Score {viral_scores['total']} < {QUALITY_THRESHOLD}. Use --force to render.")
+                print(f"  ΓÜá∩╕Å  Score {viral_scores['total']} < {QUALITY_THRESHOLD}. Use --force to render.")
                 result["quality_below_threshold"] = True
             return result
-        print(f"  🔄 Score too low — regenerating with different archetype...")
+        print(f"  ≡ƒöä Score too low ΓÇö regenerating with different archetype...")
     return result
 
 
@@ -1619,16 +1611,16 @@ def _generate_once(reel_type: str, context: dict) -> dict:
     if use_auth:
         auth_line = random.choice([
             "When I worked in IRS tax resolution, ",
-            "After 15 years in IRS tax resolution, here's what I know — ",
+            "After 15 years in IRS tax resolution, here's what I know ΓÇö ",
             "I've seen this from extensive case experience. ",
-            "Here's something most taxpayers never hear — ",
+            "Here's something most taxpayers never hear ΓÇö ",
         ])
 
-    persona = f"""You are Romy — licensed Enrolled Agent, 15 years. Founder of TaxCase Review.
+    persona = f"""You are Romy ΓÇö licensed Enrolled Agent, 15 years. Founder of TaxCase Review.
 Voice: direct, warm, former-insider authority. Like Coffeezilla meets a tax attorney.
-FORMAT: {reel_format} — {format_spec['style']}
+FORMAT: {reel_format} ΓÇö {format_spec['style']}
 PACING: {format_spec['pacing']}
-EMOTIONAL DRIVER: {emotional_driver} — {EMOTIONAL_DRIVERS[emotional_driver]}
+EMOTIONAL DRIVER: {emotional_driver} ΓÇö {EMOTIONAL_DRIVERS[emotional_driver]}
 {auth_line}
 NEVER open with: "What is..." / "Today we're talking about..." / "Let's discuss..."
 NEVER say: "The longer you wait" / "Consult a professional" / "It depends"
@@ -1640,7 +1632,7 @@ NEVER use generic examples. Always use specific names, amounts, counties, indust
     _motion_gfx  = get_motion_graphic(reel_type)
     _doc_visual  = get_documentary_visual(reel_type)
     _human_broll = get_human_broll(trade, reel_type)
-    _avatar_rule = f"AVATAR CAP: Maximum {MAX_AVATAR_SCENES} scenes may show the avatar. All other scenes must use documentary visuals, b-roll, motion graphics, or data cards — NO avatar on a plain background."
+    _avatar_rule = f"AVATAR CAP: Maximum {MAX_AVATAR_SCENES} scenes may show the avatar. All other scenes must use documentary visuals, b-roll, motion graphics, or data cards ΓÇö NO avatar on a plain background."
     _loop_inject = f"\nLOOP ENDING (add before CTA): \"{_loop_text}\"" if _use_loop else ""
 
     visual_instruction = f"""
@@ -1650,14 +1642,14 @@ Lead hook keyword = "{style_notes['hook_keyword']}" in {style_notes['hook_color'
 
 {_avatar_rule}
 
-MOTION GRAPHIC for this reel: {_motion_gfx} — inject on the hook scene (0-2s).
+MOTION GRAPHIC for this reel: {_motion_gfx} ΓÇö inject on the hook scene (0-2s).
 {"DOCUMENTARY VISUAL for evidence scene: " + _doc_visual if _doc_visual else ""}
 HUMAN B-ROLL for story scenes (5-20s): {_human_broll}
 CAMERA MOVES: vary between slow_push (tension), fast_zoom (reveal), dramatic_crop (detail), whip_pan (energy). Specify one per scene.
-PATTERN INTERRUPTS: every scene needs one — red_stamp / document_slam / headline_flash / camera_shake / record_scratch. Specify in editor_note.
+PATTERN INTERRUPTS: every scene needs one ΓÇö red_stamp / document_slam / headline_flash / camera_shake / record_scratch. Specify in editor_note.
 {_loop_inject}
 
-SCENE STRUCTURE — build the reel as these 5 scenes (60-90s total, fast cuts):
+SCENE STRUCTURE ΓÇö build the reel as these 5 scenes (60-90s total, fast cuts):
 {json.dumps(five_scenes, ensure_ascii=False)}
 Each scene description MUST specify: background, text overlay content + color, visual element, and avatar position (on/off screen).
 DATA scene pulls a real IRS Data Book FY2025 figure ({IRS_DATA_FY2025['nftls']} NFTLs, {IRS_DATA_FY2025['oic_acceptance_rate']} OIC acceptance rate, {IRS_DATA_FY2025['installment_agreements']} installment agreements).
@@ -1694,7 +1686,7 @@ PREDICTED_COMMENT_RATE: [0-100]
 """
 
     youtube_instruction = """
-YOUTUBE_TITLE: [45-70 chars — curiosity-first, NOT corporate]
+YOUTUBE_TITLE: [45-70 chars ΓÇö curiosity-first, NOT corporate]
 YOUTUBE_SHORTS_HOOK: [1 punchy sentence for Shorts]
 YOUTUBE_DESCRIPTION: [Hook line. CTA to quiz. Keywords. Max 400 chars.]
 YOUTUBE_TAGS: [12 tags, comma-separated]"""
@@ -1720,13 +1712,13 @@ HASHTAGS:
 {visual_instruction}
 {youtube_instruction}"""
 
-    # ── Retention structure for all prompts ────────────────────────────────────
+    # ΓöÇΓöÇ Retention structure for all prompts ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     STORY_STRUCTURE = f"""
 REQUIRED RETENTION STRUCTURE:
 VISUAL DOMINANCE RULE: The avatar supports the story. The visual evidence carries the story. Avatar max 30% primary screen time.
 0-2s  PATTERN INTERRUPT (MANDATORY): Your SCRIPT must open with EXACTLY this line or a direct riff: "{hook_line}"
       FULL SCREEN VISUAL FIRST. No avatar. If you change this hook, the reel fails. Scroll stops here or nowhere.
-2-5s  OPEN LOOP: Plant "{open_loop}" — creates irresistible curiosity.
+2-5s  OPEN LOOP: Plant "{open_loop}" ΓÇö creates irresistible curiosity.
 5-20s STORY: Specific person, specific county, specific dollar amount. NEVER generic.
       Name: {arch_name}. Descriptor: {arch_desc}.
       Debt: ${debt_amount:,}. Problem: {arch_detail}.
@@ -1746,15 +1738,15 @@ Rules:
 
     prompts = {
 
-        # ── NEW: Tax Horror Stories ─────────────────────────────────────────────
+        # ΓöÇΓöÇ NEW: Tax Horror Stories ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
         "tax_horror_story": f"""{persona}
 Hook: "{hook_line}"
 Week: {week_of}
 {STORY_STRUCTURE}
 Topic: A real tax horror story. Bloomberg-style storytelling, IRS-insider accuracy.
-Tell the story of {arch_name} — {arch_desc} — who owed ${debt_amount:,} and didn't act.
-Walk through: the ignored letters → the lien on public record → the bank levy →
-the moment everything became real → what happened to their business → what options remained.
+Tell the story of {arch_name} ΓÇö {arch_desc} ΓÇö who owed ${debt_amount:,} and didn't act.
+Walk through: the ignored letters ΓåÆ the lien on public record ΓåÆ the bank levy ΓåÆ
+the moment everything became real ΓåÆ what happened to their business ΓåÆ what options remained.
 Make the viewer feel the weight of each decision point.
 This is NOT a lecture. It's a story with a lesson buried inside.
 {format_block}""",
@@ -1763,9 +1755,9 @@ This is NOT a lecture. It's a story with a lesson buried inside.
 Hook: "I pulled this from public records this week."
 Week: {week_of}. County: {county}. Source: {data_source}.
 {STORY_STRUCTURE}
-{"LIVE DATA" if data_source == "live" else "ESTIMATED DATA — label as approximate"}:
+{"LIVE DATA" if data_source == "live" else "ESTIMATED DATA ΓÇö label as approximate"}:
 The largest IRS lien filed in {county} County this week: generate a specific believable amount ($180k-$2.4M range for largest).
-Who filed it — describe the business type (don't name real businesses).
+Who filed it ΓÇö describe the business type (don't name real businesses).
 What industry. What likely caused it. What options they have now.
 Public records framing: "This is sitting in the county recorder's office right now. Anyone can look it up."
 Reframe the number as a real person or business behind it.
@@ -1775,11 +1767,11 @@ Reframe the number as a real person or business behind it.
 Hook: "{hook_line}"
 Week: {week_of}
 {STORY_STRUCTURE}
-Topic: A contractor tax disaster story. Caleb Hammer energy — real, uncomfortable, specific.
-{arch_name} — {arch_desc} — owed ${debt_amount:,} in payroll taxes.
+Topic: A contractor tax disaster story. Caleb Hammer energy ΓÇö real, uncomfortable, specific.
+{arch_name} ΓÇö {arch_desc} ΓÇö owed ${debt_amount:,} in payroll taxes.
 {arch_detail}.
-Walk through: how the problem started → what they did wrong → the Trust Fund Recovery Penalty kicking in →
-the personal liability they didn't know existed → the bank levy → the lien on their house.
+Walk through: how the problem started ΓåÆ what they did wrong ΓåÆ the Trust Fund Recovery Penalty kicking in ΓåÆ
+the personal liability they didn't know existed ΓåÆ the bank levy ΓåÆ the lien on their house.
 Be specific. Name the mistakes. Don't soften it.
 The lesson must be clear. The CTA must be urgent.
 "Results vary. Every situation is different."
@@ -1790,9 +1782,9 @@ Hook: "{hook_line}"
 Week: {week_of}
 {STORY_STRUCTURE}
 Topic: The payroll tax trap that destroys more contractors than anything else.
-Walk through exactly how it works: quarterly 941 deposits → temptation to use for cash flow →
-TFRP personal liability → IRS comes after the owner personally even after LLC closes.
-{arch_name} — {arch_desc} — owed ${debt_amount:,} and thought the LLC protected them.
+Walk through exactly how it works: quarterly 941 deposits ΓåÆ temptation to use for cash flow ΓåÆ
+TFRP personal liability ΓåÆ IRS comes after the owner personally even after LLC closes.
+{arch_name} ΓÇö {arch_desc} ΓÇö owed ${debt_amount:,} and thought the LLC protected them.
 It didn't.
 Every contractor in the trades needs to hear this.
 {format_block}""",
@@ -1803,8 +1795,8 @@ Week: {week_of}. County: {county}. Source: {data_source}.
 {STORY_STRUCTURE}
 Topic: Breaking down what public IRS lien records actually reveal.
 {"LIVE DATA" if data_source == "live" else "ESTIMATED"}: {count} liens filed in {county} this week.
-Walk through: what a federal tax lien filing looks like in public record → what information is visible →
-what it means for the business owner's credit, refinancing, property → who can see it → how long it stays.
+Walk through: what a federal tax lien filing looks like in public record ΓåÆ what information is visible ΓåÆ
+what it means for the business owner's credit, refinancing, property ΓåÆ who can see it ΓåÆ how long it stays.
 Most people don't realize this is public. That's the hook.
 {format_block}""",
 
@@ -1816,7 +1808,7 @@ MICRO REEL. Visual-first. State-level heat map breakdown.
 {"LIVE" if data_source == "live" else "ESTIMATED"}: Which counties are hottest right now.
 Top 3 counties by lien concentration. Top industry in each.
 One human story behind the data.
-CTA: Comment your county — I'll tell you what's happening there.
+CTA: Comment your county ΓÇö I'll tell you what's happening there.
 {format_block}""",
 
         "worst_mistake_of_the_week": f"""{persona}
@@ -1834,7 +1826,7 @@ Short. Punchy. Save-worthy.
 Hook: "I just saw someone say you should [specific bad IRS advice]. That is dangerous."
 Week: {week_of}. {"Topic: " + topic if topic else "Reacting to viral IRS misinformation."}
 {STORY_STRUCTURE}
-React format: Bad advice → why it's wrong → what actually happens → real example of consequences.
+React format: Bad advice ΓåÆ why it's wrong ΓåÆ what actually happens ΓåÆ real example of consequences.
 Use Coffeezilla energy: calm, authoritative, slightly frustrated at the bad advice.
 NOT lecture. Reaction.
 {format_block}""",
@@ -1850,21 +1842,21 @@ React to one piece of bad tax advice that's dangerously common:
 - "The IRS won't bother with amounts under $10k"
 - "You can't negotiate with the IRS"
 Be specific about what goes wrong when people follow this advice.
-Use a real scenario — {arch_name} did exactly this and it cost them ${debt_amount:,}.
+Use a real scenario ΓÇö {arch_name} did exactly this and it cost them ${debt_amount:,}.
 {format_block}""",
 
         "irs_agent_story": f"""{persona}
 Hook: "When I worked in IRS tax resolution, I had a case like this."
 Week: {week_of}
 {STORY_STRUCTURE}
-[Authority REQUIRED — this IS an IRS agent story]
+[Authority REQUIRED ΓÇö this IS an IRS agent story]
 Tell a story from inside the IRS. Former-agent perspective.
 What Revenue Officers actually look for. What makes them escalate. What makes them stop.
 A real case type I worked (anonymized): industry, debt amount, what the taxpayer did, how it resolved.
 This is the stuff that never gets published. This is the inside view.
 {format_block}""",
 
-        # ── Preserved v5 prompts ────────────────────────────────────────────────
+        # ΓöÇΓöÇ Preserved v5 prompts ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
         "educational": f"""{persona}
 Hook: "{pick_hook('curiosity')}"
 Week: {week_of}
@@ -1872,14 +1864,14 @@ Week: {week_of}
 Topic: One IRS insider insight that most people don't know. Go deep, not wide.
 Pick ONE: First-Time Penalty Abatement / CNC status / CDP hearing / OIC rate (37%) /
 CSED 10-year clock / Lien vs levy vs garnishment.
-Teach through {arch_name}'s story — {arch_desc} who discovered this the hard way.
+Teach through {arch_name}'s story ΓÇö {arch_desc} who discovered this the hard way.
 {format_block}""",
 
         "notice": f"""{persona}
 Hook: "{pick_hook('fear')}"
 Week: {week_of}. Notice: {notice}
 {STORY_STRUCTURE}
-Topic: {arch_name} — {arch_desc} — just got a {notice}. They're scared.
+Topic: {arch_name} ΓÇö {arch_desc} ΓÇö just got a {notice}. They're scared.
 Cover: what triggered it, the exact deadline, what happens at each non-response point, one action NOW.
 Make them feel understood before you explain anything.
 {format_block}""",
@@ -1897,8 +1889,8 @@ One action today. BANNED: "The longer you wait"
 Hook: "{pick_hook('story')}"
 Week: {week_of}
 {STORY_STRUCTURE}
-Topic: {arch_name} — {arch_desc} — owed ${debt_amount:,}.
-Tell the full arc: before (emotional, specific) → what they did → resolution (specific dollars saved) → after.
+Topic: {arch_name} ΓÇö {arch_desc} ΓÇö owed ${debt_amount:,}.
+Tell the full arc: before (emotional, specific) ΓåÆ what they did ΓåÆ resolution (specific dollars saved) ΓåÆ after.
 "Results vary. Every situation is different."
 {format_block}""",
 
@@ -1908,15 +1900,15 @@ Week: {week_of}
 {STORY_STRUCTURE}
 Bust ONE myth with one specific fact and one story of consequences.
 {arch_name} believed this myth. It cost them ${debt_amount:,} in options.
-State myth → Bust with IRS fact → Real consequence → What's true → CTA.
+State myth ΓåÆ Bust with IRS fact ΓåÆ Real consequence ΓåÆ What's true ΓåÆ CTA.
 {format_block}""",
 
         "data_reveal": f"""{persona}
 Hook: "{pick_hook('public_record')}"
 Week: {week_of}. County: {county}. Count: {count}. Source: {data_source}.
 {STORY_STRUCTURE}
-{"ESTIMATED — label as approximate." if data_source == "estimated" else "LIVE DATA."}
-Reframe: {count} people in {county} — NOT "{count} liens filed."
+{"ESTIMATED ΓÇö label as approximate." if data_source == "estimated" else "LIVE DATA."}
+Reframe: {count} people in {county} ΓÇö NOT "{count} liens filed."
 Who are these people? What industries? What does a lien mean for their daily lives?
 {format_block}""",
 
@@ -1925,7 +1917,7 @@ Hook: "{pick_hook('identity')}"
 Week: {week_of}
 {STORY_STRUCTURE}
 Topic: Why contractors face IRS liens more than any profession.
-{arch_name} — {arch_desc} — ${arch_detail}. Owed ${debt_amount:,}.
+{arch_name} ΓÇö {arch_desc} ΓÇö ${arch_detail}. Owed ${debt_amount:,}.
 Cover: payroll tax trap, TFRP personal liability, one specific scenario, what to do today.
 {format_block}""",
 
@@ -1942,7 +1934,7 @@ Top industries in {state}. One {state}-specific factor. Resolution options. Loca
 Hook: "{pick_hook('fear')}"
 Week: {week_of}
 {STORY_STRUCTURE}
-Answer ONE question directly — no hedging. {arch_name}'s story illustrates it.
+Answer ONE question directly ΓÇö no hedging. {arch_name}'s story illustrates it.
 Pick: IRS take my house? / Social Security garnishment? / Ignore IRS? / Negotiate myself? / CSED? / Minimum settlement?
 {format_block}""",
 
@@ -1950,8 +1942,8 @@ Pick: IRS take my house? / Social Security garnishment? / Ignore IRS? / Negotiat
 Hook: "{pick_hook('story')}"
 Week: {week_of}
 {STORY_STRUCTURE}
-{arch_name} — {arch_desc} — ${debt_amount:,}. Full emotional transformation.
-Before → turning point → resolution (exact $ saved) → after.
+{arch_name} ΓÇö {arch_desc} ΓÇö ${debt_amount:,}. Full emotional transformation.
+Before ΓåÆ turning point ΓåÆ resolution (exact $ saved) ΓåÆ after.
 "Results vary. Every situation is unique."
 {format_block}""",
 
@@ -1959,7 +1951,7 @@ Before → turning point → resolution (exact $ saved) → after.
 Hook: "{pick_hook('fear')}"
 Week: {week_of}
 {STORY_STRUCTURE}
-Walk through $25,000 debt compounding. April 15 → Month 1 → Month 6 → Month 12.
+Walk through $25,000 debt compounding. April 15 ΓåÆ Month 1 ΓåÆ Month 6 ΓåÆ Month 12.
 Bottom line: ~$47/day in penalties. Visceral. Not academic.
 Retention beat at the 12-month mark: "But here's the part nobody expects..."
 {format_block}""",
@@ -1969,7 +1961,7 @@ Hook: "{pick_hook('curiosity')}"
 Week: {week_of}
 {STORY_STRUCTURE}
 3 mistakes that destroy IRS options. Each as a story.
-Use {arch_name} for one of them — ${arch_detail} — ${debt_amount:,}.
+Use {arch_name} for one of them ΓÇö ${arch_detail} ΓÇö ${debt_amount:,}.
 {format_block}""",
 
         "confession": f"""{persona}
@@ -1985,8 +1977,8 @@ Deliver it like you're telling a friend something critical. {arch_name}'s story 
 Hook: "{pick_hook('story')}"
 Week: {week_of}
 {STORY_STRUCTURE}
-{arch_name} — {arch_desc} — ${debt_amount:,}. 70% story, 30% lesson.
-Mistake → what made it worse → turning point → resolution in exact dollars.
+{arch_name} ΓÇö {arch_desc} ΓÇö ${debt_amount:,}. 70% story, 30% lesson.
+Mistake ΓåÆ what made it worse ΓåÆ turning point ΓåÆ resolution in exact dollars.
 "Results vary."
 {format_block}""",
 
@@ -1995,7 +1987,7 @@ Hook: "{pick_hook('fear')}"
 Week: {week_of}. Notice: {notice}
 {STORY_STRUCTURE}
 What happens when {notice} is ignored. Escalation sequence with exact timelines.
-CP14 → CP501/502/503 → CP504 → LT11 (30-day CDP window!) → levy → lien.
+CP14 ΓåÆ CP501/502/503 ΓåÆ CP504 ΓåÆ LT11 (30-day CDP window!) ΓåÆ levy ΓåÆ lien.
 {arch_name} ignored it. Show exactly what happened at each step.
 {format_block}""",
 
@@ -2012,7 +2004,7 @@ Make viewer feel like they're reading their own situation.
 Hook: "{pick_hook('horror')}"
 Week: {week_of}
 {STORY_STRUCTURE}
-{arch_name} — {arch_desc}. BEFORE: avoiding mailbox, 2am anxiety, frozen on IRS calls.
+{arch_name} ΓÇö {arch_desc}. BEFORE: avoiding mailbox, 2am anxiety, frozen on IRS calls.
 AFTER: payment plan, lien withdrawn, reopened the business. Hired back 3 employees.
 Emotional contrast. "Results vary."
 {format_block}""",
@@ -2023,7 +2015,7 @@ Week: {week_of}
 {STORY_STRUCTURE}
 One thing IRS knows that taxpayers don't. "Here's what I never told taxpayers when I worked there."
 Agent quotas / FTA automatic / CNC status / CSED / OIC pre-qualifier / Revenue Officer discretion.
-{arch_name}'s story illustrates it — they learned this too late.
+{arch_name}'s story illustrates it ΓÇö they learned this too late.
 {format_block}""",
 
         "county_lien_alert": f"""{persona}
@@ -2032,7 +2024,7 @@ Week: {week_of}. County: {county}. Count: {count}. Source: {data_source}.
 {STORY_STRUCTURE}
 MICRO REEL. {"LIVE DATA" if data_source == "live" else "ESTIMATED"}: {count} liens in {county}.
 Reframe: "{count} business owners in {county} woke up to a federal lien."
-Who → what it means → one action → comment CTA.
+Who ΓåÆ what it means ΓåÆ one action ΓåÆ comment CTA.
 {format_block}""",
 
         "city_lien_alert": f"""{persona}
@@ -2063,7 +2055,7 @@ Hook: "{pick_hook('contrarian')}"
 Week: {week_of}. {"Topic: " + topic if topic else "Evergreen IRS enforcement update."}
 {STORY_STRUCTURE}
 {"React to: " + topic if topic else "Recent IRS enforcement trend from former-agent perspective."}
-What changed → who it affects → why it matters → what to do → CTA.
+What changed ΓåÆ who it affects ΓåÆ why it matters ΓåÆ what to do ΓåÆ CTA.
 {"DO NOT invent facts about: " + topic if topic else ""}
 {format_block}""",
 
@@ -2071,7 +2063,7 @@ What changed → who it affects → why it matters → what to do → CTA.
 Hook: "{pick_hook('fear')}"
 Week: {week_of}. {"Topic: " + topic if topic else "IRS deadline."}
 {STORY_STRUCTURE}
-MICRO REEL. Deadline urgency. What → who → consequence → one action.
+MICRO REEL. Deadline urgency. What ΓåÆ who ΓåÆ consequence ΓåÆ one action.
 {format_block}""",
 
         "news_reaction": f"""{persona}
@@ -2124,7 +2116,7 @@ Hook: "{pick_hook('contrarian')}"
 Week: {week_of}
 {STORY_STRUCTURE}
 "Top 5 IRS myths ranked from harmless to catastrophic."
-Each as a story — who believed it, what it cost. DEEP DIVE.
+Each as a story ΓÇö who believed it, what it cost. DEEP DIVE.
 Save-worthy. "Save this before you believe any of these."
 {format_block}""",
 
@@ -2133,7 +2125,7 @@ Hook: "{pick_hook('curiosity')}"
 Week: {week_of}
 {STORY_STRUCTURE}
 Interactive: "Quick test: would the IRS levy {arch_name}?"
-Present {arch_name}'s situation → pause → answer → explain → CTA.
+Present {arch_name}'s situation ΓåÆ pause ΓåÆ answer ΓåÆ explain ΓåÆ CTA.
 "Comment what you thought before the reveal."
 {format_block}""",
 
@@ -2141,14 +2133,14 @@ Present {arch_name}'s situation → pause → answer → explain → CTA.
 Hook: "{pick_hook('fear')}"
 Week: {week_of}. Notice: {notice}
 {STORY_STRUCTURE}
-"{notice} checklist — save this." Short. Actionable. Save CTA.
+"{notice} checklist ΓÇö save this." Short. Actionable. Save CTA.
 {format_block}""",
 
         "deadline_reel": f"""{persona}
 Hook: "{pick_hook('fear')}"
 Week: {week_of}. {"Deadline: " + topic if topic else "IRS deadline."}
 {STORY_STRUCTURE}
-MICRO REEL. Countdown urgency. What → who → after → action.
+MICRO REEL. Countdown urgency. What ΓåÆ who ΓåÆ after ΓåÆ action.
 {format_block}""",
 
         "contractor_series": f"""{persona}
@@ -2156,8 +2148,8 @@ Hook: "If you're {'a ' + CONTRACTOR_SERIES.get(trade, CONTRACTOR_SERIES['roofing
 Week: {week_of}. Trade: {CONTRACTOR_SERIES.get(trade, CONTRACTOR_SERIES['roofing'])['label'] if trade else 'contractors'}.
 {STORY_STRUCTURE}
 Series: IRS Tips for {CONTRACTOR_SERIES.get(trade, CONTRACTOR_SERIES['roofing'])['label'] if trade else 'Contractors'}
-{arch_name} — {arch_desc} — {arch_detail}. Owed ${debt_amount:,}.
-Cover: how it starts → what makes it worse → TFRP personal liability → action → lead magnet.
+{arch_name} ΓÇö {arch_desc} ΓÇö {arch_detail}. Owed ${debt_amount:,}.
+Cover: how it starts ΓåÆ what makes it worse ΓåÆ TFRP personal liability ΓåÆ action ΓåÆ lead magnet.
 {format_block}""",
     }
 
@@ -2185,7 +2177,7 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
             f"{VISUAL_STYLE_GUIDE}\n"
             f"\n"
             f"MANDATORY VISUAL RULES:\n"
-            f"- NEVER more than 3 seconds of avatar on a flat background — use the dark navy gradient {COLOR_PALETTE['bg_top']}->{COLOR_PALETTE['bg_bottom']}\n"
+            f"- NEVER more than 3 seconds of avatar on a flat background ΓÇö use the dark navy gradient {COLOR_PALETTE['bg_top']}->{COLOR_PALETTE['bg_bottom']}\n"
             f"- Visual must change every 1-3 seconds throughout\n"
             f"- Every scene MUST have an on-screen text overlay (red/orange keyword, white support, max {TYPOGRAPHY['max_words']} words)\n"
             f"- Use split-screen when avatar speaks (avatar + document/evidence side by side)\n"
@@ -2232,7 +2224,7 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
             f"Hook keyword \"{style_notes['hook_keyword']}\" in {style_notes['hook_color']} over a white supporting phrase.\n\n"
             f"{VISUAL_STYLE_GUIDE}\n\n"
             f"MANDATORY VISUAL RULES:\n"
-            f"- NEVER more than 3 seconds of avatar on a flat background — use the dark navy gradient {COLOR_PALETTE['bg_top']}->{COLOR_PALETTE['bg_bottom']}\n"
+            f"- NEVER more than 3 seconds of avatar on a flat background ΓÇö use the dark navy gradient {COLOR_PALETTE['bg_top']}->{COLOR_PALETTE['bg_bottom']}\n"
             f"- Visual must change every 1-3 seconds throughout\n"
             f"- Every scene MUST have an on-screen text overlay (red/orange keyword, white support, max {TYPOGRAPHY['max_words']} words)\n"
             f"- Use split-screen when avatar speaks\n"
@@ -2272,10 +2264,10 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
     storyboard_raw  = _extract_section(raw, "VISUAL_STORYBOARD")
     _parsed_storyboard = parse_pipe_rows(storyboard_raw, min_rows=6)
     if _parsed_storyboard:
-        print(f"  ✅ Storyboard: {len(_parsed_storyboard)} scenes parsed from Claude output")
+        print(f"  Γ£à Storyboard: {len(_parsed_storyboard)} scenes parsed from Claude output")
         visual_storyboard = _parsed_storyboard
     else:
-        print(f"  ⚠️  Storyboard: Claude output not parsed — using base template ({len(base_storyboard)} scenes)")
+        print(f"  ΓÜá∩╕Å  Storyboard: Claude output not parsed ΓÇö using base template ({len(base_storyboard)} scenes)")
         visual_storyboard = base_storyboard
     # v9: enrich parsed storyboard with motion graphics, camera moves, interrupts, b-roll
     visual_storyboard = enrich_storyboard(visual_storyboard, reel_type, reel_format_out if 'reel_format_out' in dir() and reel_format_out else reel_format, trade)
@@ -2303,12 +2295,12 @@ Cover: how it starts → what makes it worse → TFRP personal liability → act
 
     word_count = len(script.split())
     est_secs   = round(word_count / 2.5)
-    print(f"  📝 [{length_tier_out.upper()}] {word_count}w (~{est_secs}s) | "
+    print(f"  ≡ƒô¥ [{length_tier_out.upper()}] {word_count}w (~{est_secs}s) | "
           f"hook={hook_type_out} | cta={cta_strat_out} | archetype={arch_name}")
 
     limit = get_word_limit(length_tier_out if length_tier_out in SCRIPT_LENGTH_TIERS else tier)
     if word_count > limit + 5:
-        print(f"  ✂️  Trimming to ~{limit} words (sentence boundary)...")
+        print(f"  Γ£é∩╕Å  Trimming to ~{limit} words (sentence boundary)...")
         # Trim at sentence boundary to avoid mid-sentence cuts that HeyGen reads aloud
         sentences = [s.strip() for s in script.replace("\n", " ").split(".") if s.strip()]
         trimmed, wc = [], 0
@@ -2439,7 +2431,7 @@ def _parse_visual_cues(raw: str, fallback: list) -> list:
                                "overlay": c.get("overlay",""), "editor_note": ""} for c in fallback[:3]]
 
 
-# ── Performance Tracking ───────────────────────────────────────────────────────
+# ΓöÇΓöÇ Performance Tracking ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def load_performance() -> list:
     if PERFORMANCE_FILE.exists():
         try: return json.loads(PERFORMANCE_FILE.read_text())
@@ -2501,10 +2493,10 @@ def show_performance_summary():
     print(f"{sep}\n")
 
 
-# ── HeyGen API ─────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ HeyGen API ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 DEFAULT_BG_COLOR = "#0f1b2d"
 
-# Vertical (1080x1920) still backgrounds per visual-cue type — verified hotlinkable
+# Vertical (1080x1920) still backgrounds per visual-cue type ΓÇö verified hotlinkable
 # Unsplash photos (the same source the social poster uses). This is the reliable
 # tier: it turns "avatar on a black screen" into a themed scene for every cue.
 _U = "https://images.unsplash.com/photo-{id}?w=1280&h=1920&fit=crop"
@@ -2533,31 +2525,31 @@ CUE_BG_IMAGES = {
 DEFAULT_BG_IMAGE = CUE_BG_IMAGES["irs_notice"]
 
 # Verified royalty-free Pexels video backgrounds (direct CDN, hotlinkable, free
-# license). Sparse on purpose — guessed Pexels URLs 403, so only confirmed-live
+# license). Sparse on purpose ΓÇö guessed Pexels URLs 403, so only confirmed-live
 # URLs go here. Set PEXELS_API_KEY for live, theme-matched video on every cue.
 # Verified Pexels vertical video URLs (9:16, 1080x1920, free license)
-# These are confirmed-live CDN URLs — each is a real distinct video
+# These are confirmed-live CDN URLs ΓÇö each is a real distinct video
 CUE_BG_VIDEOS = {
-    # Document/legal scenes — paper, stamps, official records
+    # Document/legal scenes ΓÇö paper, stamps, official records
     "irs_notice":      "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
     "lien_document":   "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
     "public_record":   "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
     "lien_stamp":      "https://videos.pexels.com/video-files/5495890/5495890-hd_1080_1920_30fps.mp4",
-    # Financial stress — money, accounts, banking
+    # Financial stress ΓÇö money, accounts, banking
     "bank_freeze":     "https://videos.pexels.com/video-files/3209828/3209828-hd_1080_1920_25fps.mp4",
     "debt_overlay":    "https://videos.pexels.com/video-files/3209828/3209828-hd_1080_1920_25fps.mp4",
     "penalty_ticker":  "https://videos.pexels.com/video-files/3209828/3209828-hd_1080_1920_25fps.mp4",
-    # Contractor/construction — job sites, trucks, crews
+    # Contractor/construction ΓÇö job sites, trucks, crews
     "contractor_truck":"https://videos.pexels.com/video-files/8191399/8191399-hd_1080_1920_30fps.mp4",
-    # Business/office stress — computers, phones, meetings
+    # Business/office stress ΓÇö computers, phones, meetings
     "dashboard_alert": "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
     "phone_ring":      "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
-    # Data/maps — charts, analytics, location
+    # Data/maps ΓÇö charts, analytics, location
     "heat_map":        "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
     "county_map":      "https://videos.pexels.com/video-files/7947956/7947956-hd_1080_1920_30fps.mp4",
 }
 
-# Pexels search query per cue — used only when PEXELS_API_KEY is set.
+# Pexels search query per cue ΓÇö used only when PEXELS_API_KEY is set.
 # Aligned to the v9 visual-style B-roll mapping.
 CUE_SEARCH_TERMS = {
     "irs_notice": "tax document letter envelope", "lien_stamp": "legal document stamp official",
@@ -2570,7 +2562,7 @@ CUE_SEARCH_TERMS = {
     "county_map": "united states map", "heat_map": "data map visualization",
     "before_after": "business owner relief success", "checklist": "checklist clipboard writing",
     "myth_reality": "legal document stamp official", "red_arrow": "financial chart graph",
-    # v9 additions — new cue handles from the style guide
+    # v9 additions ΓÇö new cue handles from the style guide
     "wage_garnishment": "paycheck salary worker stress", "settlement": "handshake agreement business",
     "calendar_deadline": "calendar deadline urgent planning", "relief": "business owner relief success",
 }
@@ -2632,7 +2624,7 @@ def build_heygen_background(script_data: dict) -> dict:
     live Pexels video (if key) -> curated verified video -> themed image -> color."""
     cue = _first_visual_cue(script_data)
     if not cue:
-        # Parsed cues empty — fall back to the reel type's canonical opening cue
+        # Parsed cues empty ΓÇö fall back to the reel type's canonical opening cue
         # so the background is still theme-matched (e.g. contractor_disaster ->
         # contractor_truck) instead of the generic default query.
         rt_cues = get_visual_cues_for_type(script_data.get("reel_type", ""))
@@ -2650,7 +2642,7 @@ def build_heygen_background(script_data: dict) -> dict:
     if v and _media_url_ok(v):
         return {"type": "video", "url": v, "play_style": "loop", "fit": "cover"}
 
-    # 3. Relevant still image (verified Unsplash) — beats a plain color every time
+    # 3. Relevant still image (verified Unsplash) ΓÇö beats a plain color every time
     img = CUE_BG_IMAGES.get(cue, DEFAULT_BG_IMAGE)
     if img and _media_url_ok(img):
         return {"type": "image", "url": img, "fit": "cover"}
@@ -2662,14 +2654,14 @@ def build_heygen_background(script_data: dict) -> dict:
 
 def clean_script_for_heygen(script: str) -> str:
     """Remove stage directions and markdown from script before HeyGen TTS.
-    HeyGen reads everything literally — [0-2s — FULL SCREEN] gets spoken aloud."""
+    HeyGen reads everything literally ΓÇö [0-2s ΓÇö FULL SCREEN] gets spoken aloud."""
     import re
-    # Remove bracketed stage directions: [0-2s — FULL SCREEN. No avatar.]
+    # Remove bracketed stage directions: [0-2s ΓÇö FULL SCREEN. No avatar.]
     script = re.sub(r"\*?\[.*?\]\*?", "", script)
-    # Remove markdown bold: **text** → text
+    # Remove markdown bold: **text** ΓåÆ text
     script = re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", script)
     # Remove timestamps like "0-2s:" or "Sec 0-2:"
-    script = re.sub(r"(?:Sec\s*)?\d+[-–]\d+s?:\s*", "", script)
+    script = re.sub(r"(?:Sec\s*)?\d+[-ΓÇô]\d+s?:\s*", "", script)
     # Remove director notes in parentheses: (no avatar) (full screen)
     script = re.sub(r"\((?:no avatar|full screen|avatar off|b-roll|cut to)[^)]*\)", "", script, flags=re.IGNORECASE)
     # Collapse multiple spaces/newlines
@@ -2764,7 +2756,7 @@ def _split_script_across_scenes(script: str, scenes: list) -> list:
         elif i in assignments:
             result.append(script[:60] + ".")  # fallback snippet
         else:
-            result.append(".")  # non-avatar scene — silence placeholder
+            result.append(".")  # non-avatar scene ΓÇö silence placeholder
     return result
 
 
@@ -2787,7 +2779,7 @@ def submit_heygen_video(script_data: dict) -> dict:
 
     def _single_scene(reason: str = "") -> dict:
         if reason:
-            print(f"  ⚠ {reason} — single-scene fallback")
+            print(f"  ΓÜá {reason} ΓÇö single-scene fallback")
         bg = build_heygen_background(script_data)
         print(f"  HeyGen bg: {bg['type']} from cue '{_first_visual_cue(script_data) or 'none'}'")
         payload = {
@@ -2803,7 +2795,7 @@ def submit_heygen_video(script_data: dict) -> dict:
         if r2.status_code != 200:
             raise RuntimeError(f"HeyGen error: {r2.status_code} - {r2.text[:200]}")
         vid = r2.json().get("data",{}).get("video_id","")
-        print(f"  ✅ HeyGen: {vid} | single-scene | bg={bg['type']}")
+        print(f"  Γ£à HeyGen: {vid} | single-scene | bg={bg['type']}")
         record_heygen_render(vid, script_data["reel_type"])
         return {"video_id": vid, "status": "processing"}
 
@@ -2857,7 +2849,7 @@ def submit_heygen_video(script_data: dict) -> dict:
         return _single_scene(f"Multi-scene rejected ({r.status_code}): {r.text[:100]}")
 
     video_id = r.json().get("data", {}).get("video_id", "")
-    print(f"  ✅ HeyGen job: {video_id} | {len(video_inputs)} scenes | 1080x1920")
+    print(f"  Γ£à HeyGen job: {video_id} | {len(video_inputs)} scenes | 1080x1920")
     record_heygen_render(video_id, script_data["reel_type"])
     return {"video_id": video_id, "status": "processing"}
 
@@ -2880,10 +2872,12 @@ def wait_for_heygen(video_id: str, max_minutes: int = 15) -> str:
     print("  Timeout"); return ""
 
 
-# ── Remotion ───────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Remotion ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 REMOTION_COMP_MAP = {
     "weekly_stats":"LienStatReel","county_breakdown":"CountyBreakdownReel",
     "penalty_growth":"PenaltyGrowthReel","notice":"NoticeExplainerReel",
+    "myth_bust":"MythBustReel","public_record":"PublicRecordReel",
+    "cinematic":"TaxCaseCinematicReel",
 }
 
 def render_remotion(reel_type: str, context: dict, dry_run: bool = False) -> str:
@@ -2917,10 +2911,29 @@ def build_remotion_props(reel_type: str, context: dict) -> dict:
         return {**base,"debtAmount":25000,"monthsShown":12}
     elif reel_type == "notice":
         return {**base,"noticeType":context.get("notice","CP504")}
+    elif reel_type == "myth_bust":
+        return {**base,
+                "myth":context.get("myth","Closing the LLC erases the tax debt"),
+                "reality":context.get("reality","The Trust Fund Recovery Penalty follows you personally — not the business"),
+                "irsCode":context.get("irs_code","IRC §6672 — TFRP makes responsible persons personally liable"),
+                "hookLine":context.get("hook","Your accountant may have told you this. Here's why it's wrong.")}
+    elif reel_type == "public_record":
+        return {**base,"reelType":"county_lien_alert",
+                "county":stats.get("top_county","Miami-Dade"),"state":"Florida",
+                "count":stats.get("count",47),"topAmount":stats.get("top_amount",142000),
+                "industry":context.get("industry","roofing contractors")}
+    elif reel_type == "cinematic":
+        return {"reelType":context.get("reel_type","public_record_breakdown"),
+                "hook":context.get("hook","He ignored one IRS letter. Then his tax lien became public."),
+                "script":context.get("script", context.get("body","")),
+                "county":stats.get("top_county","Miami-Dade"),"state":"Florida",
+                "debtAmount":stats.get("top_amount",87000),
+                "noticeType":context.get("notice","CP504"),
+                "phone":PHONE,"siteUrl":"taxcasereview.org/quiz"}
     return base
 
 
-# ── Collection page detection + IndexNow (mirrors social_media_poster.py) ──────
+# ΓöÇΓöÇ Collection page detection + IndexNow (mirrors social_media_poster.py) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 REEL_TRADE_PAGE = {
     "roofing":            "/contractors/roofing",
     "hvac":               "/contractors/hvac",
@@ -2937,7 +2950,7 @@ RESOLUTION_KEYWORDS = ["offer in compromise", "installment", "penalty abatement"
 
 def detect_collection_page(state: str = "", trade: str = "", topic: str = "") -> str:
     """Detect the site collection page this reel maps to, from state/county/trade
-    — same idea social_media_poster.py uses for blogs. Returns a full URL."""
+    ΓÇö same idea social_media_poster.py uses for blogs. Returns a full URL."""
     t = (topic or "").lower()
     trade_key = (trade or "").lower()
     if trade_key in REEL_TRADE_PAGE:
@@ -2954,7 +2967,7 @@ def detect_collection_page(state: str = "", trade: str = "", topic: str = "") ->
 
 
 def _indexnow_ping(url: str):
-    """Submit a URL to IndexNow (Bing/Yandex) — same key as social_media_poster.py."""
+    """Submit a URL to IndexNow (Bing/Yandex) ΓÇö same key as social_media_poster.py."""
     try:
         payload = {
             "host":        "taxcasereview.org",
@@ -2966,16 +2979,16 @@ def _indexnow_ping(url: str):
                           json=payload,
                           headers={"Content-Type": "application/json"},
                           timeout=10)
-        print(f"  IndexNow ping: {r.status_code} — {url}")
+        print(f"  IndexNow ping: {r.status_code} ΓÇö {url}")
     except Exception as e:
         print(f"  IndexNow ping failed (non-blocking): {e}")
 
 
-# ── GitHub media rehosting (permanent URLs for Make.com) ────────────────────────
+# ΓöÇΓöÇ GitHub media rehosting (permanent URLs for Make.com) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # Make.com downloads the video by URL. HeyGen signed URLs expire (~7 days) and a
 # missing/empty URL throws BundleValidationError ("Invalid URL in parameter 'url'").
-# This rehosts the video — from a local file (Remotion) or a temporary URL (HeyGen)
-# — to the media repo via the Git Data API (robust for binaries, unlike the 1 MB-
+# This rehosts the video ΓÇö from a local file (Remotion) or a temporary URL (HeyGen)
+# ΓÇö to the media repo via the Git Data API (robust for binaries, unlike the 1 MB-
 # limited Contents API) and returns a PERMANENT raw URL. Returns "" on failure;
 # callers MUST NOT post an empty URL to Make.
 def _gh_media_config() -> tuple[str, str]:
@@ -2988,9 +3001,9 @@ def rehost_to_github(dest_name: str, *, local_file: str = "", source_url: str = 
     import base64 as _b64
     token, repo = _gh_media_config()
     if not token:
-        print("  [rehost] GITHUB_TOKEN not set — cannot rehost"); return ""
+        print("  [rehost] GITHUB_TOKEN not set ΓÇö cannot rehost"); return ""
 
-    # 1) Resolve the bytes — local render or remote (e.g. HeyGen signed) URL.
+    # 1) Resolve the bytes ΓÇö local render or remote (e.g. HeyGen signed) URL.
     try:
         if local_file and os.path.exists(local_file):
             with open(local_file, "rb") as f:
@@ -3005,7 +3018,7 @@ def rehost_to_github(dest_name: str, *, local_file: str = "", source_url: str = 
     except Exception as e:
         print(f"  [rehost] could not read source: {e}"); return ""
     if not data:
-        print("  [rehost] empty payload — nothing to upload"); return ""
+        print("  [rehost] empty payload ΓÇö nothing to upload"); return ""
 
     path    = f"reels/{dest_name}"
     raw_url = f"https://raw.githubusercontent.com/{repo}/main/{path}"
@@ -3064,7 +3077,7 @@ def rehost_to_github(dest_name: str, *, local_file: str = "", source_url: str = 
     return ""
 
 
-# ── Make.com Payload ───────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Make.com Payload ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def post_reel_via_make(caption: str, hashtags: str,
                        video_url: str = "", video_file: str = "",
                        reel_type: str = "", script: str = "",
@@ -3073,7 +3086,7 @@ def post_reel_via_make(caption: str, hashtags: str,
         print("  MAKE_WEBHOOK_URL not set"); return {"error": "no webhook"}
     caption_full = f"{caption}\n\n{hashtags}" if hashtags else caption
     analytics    = analytics or {}
-    # Audio cue map by reel format — sent to Make.com for sound design
+    # Audio cue map by reel format ΓÇö sent to Make.com for sound design
     AUDIO_BEDS = {
         "true_crime":    {"music": "dark_tension_underscore", "bpm": 85,  "swell_at": "30s"},
         "documentary":   {"music": "cinematic_investigation",  "bpm": 90,  "swell_at": "35s"},
@@ -3094,7 +3107,7 @@ def post_reel_via_make(caption: str, hashtags: str,
             yt_title = first[:67] + " | TaxCase Review"
         elif reel_type:
             # Last-resort title so YouTube never receives an empty field.
-            yt_title = f"{reel_type.replace('_', ' ').title()} — IRS Tax Lien Help for Contractors"
+            yt_title = f"{reel_type.replace('_', ' ').title()} ΓÇö IRS Tax Lien Help for Contractors"
         else:
             yt_title = "IRS Tax Help | TaxCase Review"
     yt_desc = analytics.get("youtube_description","")
@@ -3103,20 +3116,20 @@ def post_reel_via_make(caption: str, hashtags: str,
     # Build SEO-rich YouTube description if Claude didn't generate one
     if not yt_desc:
         excerpt = " ".join(script.split()[:60]) + "..." if script else ""
-        location_line = f"{county_name} County, {state_name} — " if county_name and state_name else (f"{state_name} — " if state_name else "")
+        location_line = f"{county_name} County, {state_name} ΓÇö " if county_name and state_name else (f"{state_name} ΓÇö " if state_name else "")
         yt_desc = (
             f"{location_line}{caption}\n\n"
             f"{excerpt}\n\n"
-            f"🔗 Free 60-second IRS risk assessment: {QUIZ_URL}\n"
-            f"📞 Talk to an Enrolled Agent: {PHONE}\n\n"
+            f"≡ƒöù Free 60-second IRS risk assessment: {QUIZ_URL}\n"
+            f"≡ƒô₧ Talk to an Enrolled Agent: {PHONE}\n\n"
             f"TaxCase Review was founded by experienced Enrolled Agents. "
             f"We help contractors, business owners, and self-employed professionals "
             f"resolve federal tax liens, payroll tax debt, IRS levies, and wage garnishments.\n\n"
-            f"Resolution options: Offer in Compromise · Installment Agreement · "
-            f"Penalty Abatement · Currently Not Collectible · Lien Withdrawal · "
-            f"Wage Garnishment Release · Bank Levy Release\n\n"
-            f"Serving: Florida · Texas · Georgia · Arizona · California · New York · "
-            f"North Carolina · Illinois · Ohio · Pennsylvania\n\n"
+            f"Resolution options: Offer in Compromise ┬╖ Installment Agreement ┬╖ "
+            f"Penalty Abatement ┬╖ Currently Not Collectible ┬╖ Lien Withdrawal ┬╖ "
+            f"Wage Garnishment Release ┬╖ Bank Levy Release\n\n"
+            f"Serving: Florida ┬╖ Texas ┬╖ Georgia ┬╖ Arizona ┬╖ California ┬╖ New York ┬╖ "
+            f"North Carolina ┬╖ Illinois ┬╖ Ohio ┬╖ Pennsylvania\n\n"
             f"#IRSTaxLien #TaxResolution #TaxDebt #IRSHelp #FederalTaxLien "
             f"#OfferInCompromise #PayrollTax #TaxRelief #FormerIRSOfficer "
             f"#SmallBusiness #Contractors #SelfEmployed"
@@ -3124,7 +3137,7 @@ def post_reel_via_make(caption: str, hashtags: str,
     yt_tags_raw = analytics.get("youtube_tags","")
     tag_list = [t.strip() for t in yt_tags_raw.split(",")] if yt_tags_raw else \
                [h.strip().lstrip("#") for h in hashtags.replace("\n"," ").split() if h.startswith("#")]
-    # SEO base tags — mix of topic, location, audience
+    # SEO base tags ΓÇö mix of topic, location, audience
     location_tags = []
     if state_name:  location_tags.append(f"{state_name} tax lien")
     if county_name: location_tags.append(f"{county_name} County IRS")
@@ -3167,7 +3180,7 @@ def post_reel_via_make(caption: str, hashtags: str,
         "city":                analytics.get("city",""),
         "state":               analytics.get("state",""),
         "data_source":         analytics.get("data_source",""),
-        # Collection page (detected from state/county/trade — same logic the
+        # Collection page (detected from state/county/trade ΓÇö same logic the
         # social poster uses) so Make.com can link the reel to its site hub.
         "collection_page":     analytics.get("collection_page") or detect_collection_page(
                                    analytics.get("state",""),
@@ -3178,7 +3191,7 @@ def post_reel_via_make(caption: str, hashtags: str,
     return {"status": r.status_code, "response": r.text}
 
 
-# ── Log + Save ─────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Log + Save ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def load_reel_log() -> list:
     if REEL_LOG_FILE.exists():
         try: return json.loads(REEL_LOG_FILE.read_text())
@@ -3272,7 +3285,7 @@ def get_logger(run_type: str):
     except ImportError: return None
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Main ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def main():
     ALL_HEYGEN_TYPES = [
         "educational","notice","urgency","success-story","myth-bust","data-reveal",
@@ -3289,18 +3302,10 @@ def main():
     ]
     parser = argparse.ArgumentParser(description="TaxCase Review Reel Generator v8 (Top 1% Visual-First Engine)")
     parser.add_argument("--auto",                action="store_true")
-    VALID_REMOTION = ["weekly-stats", "county-breakdown", "penalty-growth", "notice",
-                      "public-record", "myth-bust"]
-    VALID_HEYGEN = ["educational", "contractor", "contractor-disaster", "myth-bust",
-                    "data-reveal", "notice", "urgency", "success-story",
-                    "state-spotlight", "payroll-tax-trap", "public-record-breakdown"]
-    # nargs="?" so the flag works bare (--heygen / --remotion -> '__auto__'), with an
-    # explicit type (--heygen educational), or combined with --auto. Never exits with
-    # an argparse usage error on an unknown value.
-    parser.add_argument("--remotion", nargs="?", const="__auto__", default=None,
-                        help="Remotion reel type; bare or with --auto picks a random valid type")
-    parser.add_argument("--heygen", nargs="?", const="__auto__", default=None,
-                        help="HeyGen reel type; bare or with --auto picks a random valid type")
+    parser.add_argument("--remotion",            default=None,
+                        choices=["weekly-stats","county-breakdown","penalty-growth","notice",
+                                 "myth-bust","public-record","cinematic"])
+    parser.add_argument("--heygen",              default=None, choices=ALL_HEYGEN_TYPES)
     parser.add_argument("--notice",              default=None, choices=["CP14","CP503","CP504","CP2000"])
     parser.add_argument("--state",               default=None)
     parser.add_argument("--county",              default=None)
@@ -3315,25 +3320,6 @@ def main():
     parser.add_argument("--force",               action="store_true")
     parser.add_argument("--performance-summary", action="store_true")
     args = parser.parse_args()
-
-    # Resolve --heygen / --remotion. Bare flag (nargs const '__auto__') or --auto
-    # picks a random valid type; an unknown explicit value falls back gracefully so
-    # a scheduled invocation never exits with an argparse usage error.
-    if args.heygen == "__auto__" or (args.auto and args.heygen is not None):
-        args.heygen = random.choice(VALID_HEYGEN)
-        print(f"  --heygen auto -> {args.heygen}")
-    elif args.heygen is not None and args.heygen not in ALL_HEYGEN_TYPES:
-        fb = random.choice(VALID_HEYGEN)
-        print(f"  WARN: '{args.heygen}' is not a valid HeyGen type — using '{fb}'")
-        args.heygen = fb
-
-    if args.remotion == "__auto__" or (args.auto and args.remotion is not None):
-        args.remotion = random.choice(VALID_REMOTION)
-        print(f"  --remotion auto -> {args.remotion}")
-    elif args.remotion is not None and args.remotion not in VALID_REMOTION:
-        fb = random.choice(VALID_REMOTION)
-        print(f"  WARN: '{args.remotion}' is not a valid Remotion type — using '{fb}'")
-        args.remotion = fb
 
     REELS_DIR.mkdir(exist_ok=True)
     if args.performance_summary: show_performance_summary(); return
@@ -3351,18 +3337,14 @@ def main():
     print(f"  {'DRY RUN' if args.dry_run else 'LIVE'}")
     print(f"{sep}\n")
 
-    # Explicit --remotion / --heygen win over a bare --auto (which falls back to the
-    # weekday schedule only when no engine was specified).
-    if args.remotion:
-        engine = "remotion"; reel_type = args.remotion.replace("-","_")
-    elif args.heygen:
-        engine = "heygen"; reel_type = args.heygen.replace("-","_")
-    elif args.auto:
+    if args.auto:
         engine, reel_type = get_schedule_for_today()
         if engine is None: print("No reel scheduled today."); return
         print(f"Auto -> {engine.upper()} / {reel_type}\n")
+    elif args.remotion:
+        engine = "remotion"; reel_type = args.remotion.replace("-","_")
     else:
-        parser.print_help(); return
+        engine = "heygen"; reel_type = args.heygen.replace("-","_")
 
     if engine == "heygen" and not args.dry_run:
         ok, msg = can_use_heygen()
@@ -3384,7 +3366,7 @@ def main():
         "data_source":stats.get("data_source","estimated"),
     }
 
-    # Cross-script coordination — if the social script already posted this
+    # Cross-script coordination ΓÇö if the social script already posted this
     # county/trade today, switch to a different county so the two engines don't
     # overlap on the same daily angle.
     if HAS_SHARED and si.is_duplicate_today("reel", context["county"], context.get("trade", "")):
@@ -3393,7 +3375,7 @@ def main():
         if alts:
             new_county = random.choice(alts)
             print(f"  Cross-script dedupe: {context['county']} already posted today "
-                  f"by social — switching to {new_county}")
+                  f"by social ΓÇö switching to {new_county}")
             context["county"] = new_county
 
     logger = get_logger(f"reel_{engine}")
@@ -3432,9 +3414,9 @@ def main():
         if video_file and not args.dry_run:
             # Rehost the local render to a permanent GitHub raw URL for Make.com.
             public_url = rehost_to_github(Path(video_file).name, local_file=video_file)
-            # Never post an empty URL — Make throws "Invalid URL in parameter 'url'".
+            # Never post an empty URL ΓÇö Make throws "Invalid URL in parameter 'url'".
             if not public_url:
-                print("  Upload failed — NOT posting to Make (would send an empty video_url).")
+                print("  Upload failed ΓÇö NOT posting to Make (would send an empty video_url).")
                 save_reel_entry({"date":date.today().isoformat(),"engine":"remotion",
                                  "reel_type":reel_type,"video_file":video_file,"video_url":"",
                                  "status":"rendered_upload_failed",
@@ -3453,7 +3435,7 @@ def main():
                              "status":"posted" if make_ok else "rendered",
                              **{k:script_data[k] for k in ["hook_type","save_worthy","quality_score"]}})
             save_performance_entry(build_performance_entry(script_data, video_id=str(video_file)))
-            # Content flywheel — log high-performers + ping the collection page.
+            # Content flywheel ΓÇö log high-performers + ping the collection page.
             if make_ok:
                 coll_page = detect_collection_page(script_data.get("state",""),
                                                    script_data.get("trade",""),
@@ -3535,7 +3517,7 @@ def main():
             make_ok = result.get("status") == 200
             print(f"Make.com: {result}")
             save_performance_entry(build_performance_entry(script_data, video_id=video_id, video_url=post_url))
-            # Content flywheel — log high-performers + ping the collection page.
+            # Content flywheel ΓÇö log high-performers + ping the collection page.
             if make_ok:
                 coll_page = detect_collection_page(script_data.get("state",""),
                                                    script_data.get("trade",""),
