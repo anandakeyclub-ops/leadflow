@@ -1,14 +1,14 @@
-"""
+﻿"""
 bridge_to_email_pool.py
 =======================
 Bridges enriched contacts from ALL state sources into lien_dbpr_contacts
 so send_email_sequence.py picks them up automatically.
 
 Sources bridged:
-  --source pdl    → lien_pdl_contacts       (individuals + businesses via PDL API)
-  --source tdlr   → texas_tdlr_contacts     (TX licensed contractors, lien_match=TRUE)
-  --source roc    → arizona_roc_contacts    (AZ licensed contractors)
-  --source all    → all three sources
+  --source pdl    â†’ lien_pdl_contacts       (individuals + businesses via PDL API)
+  --source tdlr   â†’ texas_tdlr_contacts     (TX licensed contractors, lien_match=TRUE)
+  --source roc    â†’ arizona_roc_contacts    (AZ licensed contractors)
+  --source all    â†’ all three sources
 
 Why this exists:
   send_email_sequence.py reads ONLY from lien_dbpr_contacts.
@@ -32,7 +32,7 @@ Usage:
   python bridge_to_email_pool.py --stats
 
 Schedule:
-  Run daily after enrichment — add to Task Scheduler after email enrichment step
+  Run daily after enrichment â€” add to Task Scheduler after email enrichment step
   Arguments: bridge_to_email_pool.py --source all
   Start in:  C:\\Users\\Dana\\Desktop\\leadflow
 """
@@ -44,7 +44,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-LEADFLOW_DIR = Path(__file__).resolve().parent
+LEADFLOW_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(LEADFLOW_DIR))
 load_dotenv(LEADFLOW_DIR / ".env")
 
@@ -122,7 +122,7 @@ def score_to_numeric(confidence: str) -> float:
 def bridge_pdl(conn, existing_emails: set, suppressed: set,
                dry_run: bool) -> int:
     """
-    Bridge lien_pdl_contacts → lien_dbpr_contacts.
+    Bridge lien_pdl_contacts â†’ lien_dbpr_contacts.
     PDL records are tied to normalized_liens via normalized_lien_id.
     """
     with conn.cursor() as cur:
@@ -191,9 +191,9 @@ def bridge_pdl(conn, existing_emails: set, suppressed: set,
 def bridge_tdlr(conn, existing_emails: set, suppressed: set,
                 dry_run: bool) -> int:
     """
-    Bridge texas_tdlr_contacts (lien_match=TRUE, has email) → lien_dbpr_contacts.
+    Bridge texas_tdlr_contacts (lien_match=TRUE, has email) â†’ lien_dbpr_contacts.
     TDLR contacts link back to texas_liens via tdlr_match_id.
-    We need a normalized_liens row — create one if missing.
+    We need a normalized_liens row â€” create one if missing.
     """
     # Ensure Dallas (and any TX county) is in counties table
     with conn.cursor() as cur:
@@ -322,7 +322,7 @@ def bridge_tdlr(conn, existing_emails: set, suppressed: set,
 def bridge_roc(conn, existing_emails: set, suppressed: set,
                dry_run: bool) -> int:
     """
-    Bridge arizona_roc_contacts (has email) → lien_dbpr_contacts.
+    Bridge arizona_roc_contacts (has email) â†’ lien_dbpr_contacts.
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -427,7 +427,7 @@ def bridge_roc(conn, existing_emails: set, suppressed: set,
 
 def show_stats(conn):
     print(f"\n{'='*60}")
-    print(f"  Bridge Stats — Email Pool Status")
+    print(f"  Bridge Stats â€” Email Pool Status")
     print(f"{'='*60}")
 
     with conn.cursor() as cur:
