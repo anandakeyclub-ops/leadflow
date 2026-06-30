@@ -590,6 +590,15 @@ def get_contacts(cur, state: str | None, source: str, limit: int, county: str | 
     suppressed = get_suppression_numbers(cur)
     remaining = max(0, int(limit))
 
+    # Fetch size must clear the "suppression graveyard": contacts are ordered by id
+    # DESC, but already-texted/suppressed records (which keep emailed=false) cluster at
+    # the highest ids. Suppression is filtered in Python AFTER the SQL LIMIT, so fetching
+    # only remaining*3 rows can return ZERO valid contacts for small --limit values even
+    # when thousands are eligible. Adding len(suppressed) guarantees at least remaining*3
+    # non-suppressed candidates surface (the graveyard is a subset of `suppressed`).
+    def fetch_n(rem: int) -> int:
+        return rem * 3 + len(suppressed)
+
     # Source 1: lien_dbpr_contacts
     if source in ("all", "dbpr") and remaining > 0:
         clauses, params = state_county_clauses("c", state, county)
@@ -608,7 +617,7 @@ def get_contacts(cur, state: str | None, source: str, limit: int, county: str | 
               nl.filed_date DESC NULLS LAST
             LIMIT %s
         """
-        cur.execute(sql, (*params, remaining * 3))
+        cur.execute(sql, (*params, fetch_n(remaining)))
         for row in cur.fetchall():
             if remaining <= 0:
                 break
@@ -640,7 +649,7 @@ def get_contacts(cur, state: str | None, source: str, limit: int, county: str | 
                   {clauses}
                 ORDER BY nl.filed_date DESC NULLS LAST
                 LIMIT %s
-            """, (*params, remaining * 3))
+            """, (*params, fetch_n(remaining)))
             for row in cur.fetchall():
                 if remaining <= 0:
                     break
@@ -673,7 +682,7 @@ def get_contacts(cur, state: str | None, source: str, limit: int, county: str | 
                   {county_clause}
                 ORDER BY id DESC
                 LIMIT %s
-            """, (*params, remaining * 3))
+            """, (*params, fetch_n(remaining)))
             for row in cur.fetchall():
                 if remaining <= 0:
                     break
@@ -708,7 +717,7 @@ def get_contacts(cur, state: str | None, source: str, limit: int, county: str | 
                   {county_clause}
                 ORDER BY RANDOM()
                 LIMIT %s
-            """, (*params, remaining * 3))
+            """, (*params, fetch_n(remaining)))
             for row in cur.fetchall():
                 if remaining <= 0:
                     break
@@ -757,7 +766,7 @@ def get_contacts(cur, state: str | None, source: str, limit: int, county: str | 
                   {state_clause}
                 ORDER BY g.id, f.amount DESC
                 LIMIT %s
-            """, (*state_params, remaining * 3))
+            """, (*state_params, fetch_n(remaining)))
             for row in cur.fetchall():
                 if remaining <= 0:
                     break
